@@ -2,7 +2,7 @@
 
 A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click.
 
-> **Status: pre-release, v0.9.0.** The plugin runs as described below; the first tagged release follows the [milestones](https://github.com/alvaris924/claude-companion/milestones).
+> **Status: v0.9.0, the first public release.** What comes next is in the [milestones](https://github.com/alvaris924/claude-companion/milestones).
 
 ## What it does
 
