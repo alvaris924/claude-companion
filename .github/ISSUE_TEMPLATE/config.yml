@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/alvaris924/claude-companion/discussions
+    about: Use Discussions for questions, ideas and show-and-tell. Issues are for bugs and scoped feature requests.
