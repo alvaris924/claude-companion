@@ -8,7 +8,7 @@ A Claude Code plugin that keeps your last prompt in view and suggests what you m
 
 - **Your last prompt stays in view.** A band directly above the prompt box shows what you last asked while the answer scrolls by. Blocks a host wraps around your words, such as a browser extension's instructions, are left out, and a pasted image shows as `[image]`.
 - **Suggested next messages.** After each answer, a model reads your last prompt and the end of the answer and offers the messages you are likeliest to send next: three by default, one to five if you prefer. Click one to send it as your own message, or set a click to put it in the prompt box to edit first. In the terminal the likeliest also appears dim in the prompt box, and Tab takes it.
-- **Settings**, opened with `/companion` or the ⚙ at the end of the band: suggestions on or off, the model that writes them (Fable 5.1 by default, or Opus 5.5, Sonnet 5.5 or Haiku 5.5), its effort, how many choices, and what a click does. They are kept across sessions, and other open sessions take a change at their next answer.
+- **Settings**, opened with `/companion` or the ⚙ at the end of the band: suggestions on or off, the model that writes them (Sonnet 5.5 by default, or Fable 5.1, Opus 5.5 or Haiku 5.5), its effort, how many choices, and what a click does. They are kept across sessions, and other open sessions take a change at their next answer.
 - **Commands.** `/last-prompt` opens the pane with your last prompt and the choices again; `/copy-next [1-5]` copies a choice to the clipboard.
 - **Wherever Claude Code shows plugin UI.** The band draws in the terminal, the VS Code extension and the desktop app, and the mobile app gets a pane instead. Where a host draws no plugin UI at all, the choices appear as a line beneath the answer.
 
@@ -39,7 +39,7 @@ Update with `claude plugin update companion`.
 ## Cost and privacy
 
 - Each suggestion is one model call made through Claude Code on your own account, so it counts toward your plan's usage or your API bill like any other request. When the chosen model gives no answer, Haiku 5.5 is asked once instead.
-- Fable 5.1, the default, writes the best suggestions and costs the most: about 100 times Haiku's price per token. Pick a cheaper model in `/companion`, or turn suggestions off and keep the last-prompt band.
+- Sonnet 5.5 is the default. Fable 5.1 writes the best suggestions and costs the most, about 100 times Haiku's price per token, and Haiku 5.5 is the cheapest and fastest. Pick one in `/companion`, or turn suggestions off and keep the last-prompt band.
 - The model sees your last prompt, up to 1,500 characters, and the end of the answer, up to 6,000 characters. Nothing else from your session is sent, and the plugin makes no network requests of its own.
 - Your settings are kept in Claude Code's plugin store; your last prompt and the choices live only in the session's state.
 - Headless runs (`claude -p`, the Agent SDK), where nobody reads the choices, make no suggestion call.

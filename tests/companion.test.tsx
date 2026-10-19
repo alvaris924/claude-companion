@@ -223,26 +223,26 @@ describe('companion', () => {
     await band.unmount()
   })
 
-  test('by default the choices are asked of Fable 5.1 at low effort, with room for its thinking', async ($, on) => {
+  test('by default the choices are asked of Sonnet 5.5 at low effort, with room for its thinking', async ($, on) => {
     const world = engine(on, ['vscode'], { showsSuggestions: false })
 
     await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
     await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
     await world.clock.advance(1)
 
-    expect(world.requests.map(request => request.model)).toEqual(['claude-fable-5-1'])
+    expect(world.requests.map(request => request.model)).toEqual(['claude-sonnet-5-5'])
     expect(world.requests[0]?.effort).toBe('low')
     expect(world.requests[0]?.maxTokens ?? 0).toBeGreaterThanOrEqual(1024)
   })
 
   test('when the chosen model gives no answer, Haiku is asked instead and its choices show', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false, declinedBy: ['claude-fable-5-1'] })
+    const world = engine(on, ['vscode'], { showsSuggestions: false, declinedBy: ['claude-sonnet-5-5'] })
 
     await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
     await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
     await world.clock.advance(1)
 
-    expect(world.requests.map(request => request.model)).toEqual(['claude-fable-5-1', 'claude-haiku-5-5'])
+    expect(world.requests.map(request => request.model)).toEqual(['claude-sonnet-5-5', 'claude-haiku-5-5'])
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
     expect(await choicesDrawn(band)).toEqual([...CHOICES])
     await band.unmount()
@@ -258,18 +258,28 @@ describe('companion', () => {
   })
 
   test('the stored settings choose the model, its effort and how many choices come', async ($, on) => {
-    const stored = { model: 'claude-sonnet-5-5', effort: 'medium', choices: '2' }
+    const stored = { model: 'claude-opus-5-5', effort: 'medium', choices: '2' }
     const world = engine(on, ['vscode'], { showsSuggestions: false, stored })
 
     await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
     await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
     await world.clock.advance(1)
 
-    expect(world.requests.map(request => [request.model, request.effort])).toEqual([['claude-sonnet-5-5', 'medium']])
+    expect(world.requests.map(request => [request.model, request.effort])).toEqual([['claude-opus-5-5', 'medium']])
     expect(world.requests[0]?.prompt).toContain('two likeliest next messages')
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
     expect(await choicesDrawn(band)).toEqual([CHOICES[0], CHOICES[1]]) // the model's third line is left out
     await band.unmount()
+  })
+
+  test('a model picked in the settings is kept whatever the default is', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { model: 'claude-fable-5-1' } })
+
+    await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    expect(world.requests.map(request => request.model)).toEqual(['claude-fable-5-1'])
   })
 
   test('one choice asks for the single next message', async ($, on) => {
@@ -354,7 +364,7 @@ describe('companion', () => {
     engine(on, ['mobile'])
 
     const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'mobile' })
-    expect((await pane.find({ key: 'summary' }))?.text).toContain('Model: Fable 5.1')
+    expect((await pane.find({ key: 'summary' }))?.text).toContain('Model: Sonnet 5.5')
     await pane.unmount()
   })
 
@@ -362,7 +372,7 @@ describe('companion', () => {
     engine(on, NOTHING_DRAWS)
 
     const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
-    expect(ran.text).toContain('Suggestions: on · Model: Fable 5.1: best picks, most of your plan · Effort: low · Choices: 3')
+    expect(ran.text).toContain('Suggestions: on · Model: Sonnet 5.5: the default · Effort: low · Choices: 3')
     expect(ran.text).toContain('run /companion in VS Code or the terminal')
   })
 

@@ -9,7 +9,7 @@ import type { LastPrompt, StoredSettings, Suggestion } from '../types'
 // (AbovePrompt) on the terminal, the desktop app and VS Code. A surface that attaches without the band (the mobile
 // app) gets a small pane instead, opened at the first prompt; /last-prompt opens it again after the person closed it.
 //
-// Next message: one model call after each main-thread turn that answered (Fable 5.1 by default, Haiku when it gives
+// Next message: one model call after each main-thread turn that answered (Sonnet 5.5 by default, Haiku when it gives
 // no answer) reads the person's last prompt and the end of the reply, and offers the messages the person might send
 // next, the likeliest first. The band shows them as choices under the last prompt; clicking one sends it as the
 // person's own words, or puts it in the prompt box to edit. The likeliest is also offered dim in the prompt box where
@@ -41,9 +41,11 @@ const PANE_MAX_CHARS = 600
 const CHOICE_MAX_CHARS = 200
 const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five']
 
-// Fable 5.1 by default since 2026-10-16, at the person's request: Anthropic's most capable model, at 100x Haiku's price
-// per token and as quick at low effort (1.6 s measured). When the chosen model gives no answer (a safety refusal, an API
-// error, the timeout) Haiku is asked instead, so the choices still come.
+// Sonnet 5.5 by default since 2026-10-19: Fable 5.1 writes the best choices but costs 100x Haiku per token, too much
+// to spend on every answer of a new install. Every model stays one pick away in the settings, and a model already
+// picked there is kept. When the chosen model gives no answer (a safety refusal, an API error, the timeout) Haiku is
+// asked instead, so the choices still come.
+const DEFAULT_MODEL = 'claude-sonnet-5-5'
 const FALLBACK_MODEL = 'claude-haiku-5-5'
 const SUGGEST_MAX_TOKENS = 2048 // the current models always think, and their thinking counts against the cap
 const SUGGEST_TIMEOUT_MS = 45000
@@ -96,7 +98,7 @@ type Settings = {
 const MODELS: readonly SelectOption[] = [
   { value: 'claude-fable-5-1', label: 'Fable 5.1: best picks, most of your plan' },
   { value: 'claude-opus-5-5', label: 'Opus 5.5' },
-  { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
+  { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5: the default' },
   { value: 'claude-haiku-5-5', label: 'Haiku 5.5: fastest, least of your plan' },
 ]
 const EFFORTS: readonly SelectOption[] = [
@@ -153,7 +155,7 @@ export function pick(value: unknown, options: readonly SelectOption[], fallback:
 export function settingsFrom(stored: Readonly<Record<string, unknown>>): Settings {
   return {
     suggest: typeof stored.suggest === 'boolean' ? stored.suggest : true,
-    model: pick(stored.model, MODELS, 'claude-fable-5-1'),
+    model: pick(stored.model, MODELS, DEFAULT_MODEL),
     effort: pick(stored.effort, EFFORTS, 'low') as Settings['effort'],
     choices: Number(pick(stored.choices, CHOICE_COUNTS, '3')),
     onPress: pick(stored.onPress, PRESS_ACTIONS, 'send') as Settings['onPress'],
