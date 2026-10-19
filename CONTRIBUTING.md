@@ -65,7 +65,7 @@ Contributors must not read, decompile or copy code from Claude Code's bundled so
 
 ## Keeping private things out
 
-This repository is public. Never commit keys, tokens or credentials, personal paths, names or email addresses, or text from real sessions: prompts, answers, transcripts, or screenshots that show private work. Test fixtures are written by hand. GitHub's secret scanning and push protection are on for this repository, but they only recognise known token formats, so read your diff before you push. If something private reaches GitHub, tell the maintainer privately rather than in a public issue.
+This repository is public. Never commit keys, tokens or credentials, personal paths, names or email addresses, or text from real sessions: prompts, answers, transcripts, or screenshots that show private work. Test fixtures are written by hand. GitHub's secret scanning and push protection are on for this repository, but they only recognise known token formats, so read your diff before you push. If something private reaches GitHub, report it privately through the repository's Security tab (Report a vulnerability) rather than in a public issue.
 
 ## Working with AI assistants
 

@@ -57,7 +57,7 @@ The plugin is a hooks module, [`hooks/register.tsx`](hooks/register.tsx), on Cla
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) first. AI assistants follow [AGENTS.md](AGENTS.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first. AI assistants follow [AGENTS.md](AGENTS.md). Design notes and decision records live in [docs/](docs/index.md).
 
 ## License
 
