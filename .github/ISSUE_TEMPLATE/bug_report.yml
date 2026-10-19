@@ -1,0 +1,77 @@
+name: Bug report
+description: Something in Companion does not work as documented
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report. The Claude Code version, where you run it and the reproduction steps matter most. Leave out prompt text, file paths and anything else private.
+  - type: input
+    id: claude-code-version
+    attributes:
+      label: Claude Code version
+      description: The output of `claude --version`, or the version of the IDE extension
+      placeholder: "2.1.301"
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Companion version
+      description: From `/plugin` or `.claude-plugin/plugin.json`, or the commit hash if you run a checkout
+      placeholder: "0.9.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where you run Claude Code
+      options:
+        - Terminal
+        - VS Code extension
+        - Desktop app
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw instead
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start Claude Code with Companion installed
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: Lines naming `companion` from a session started with `claude --debug`. Remove prompt text, paths and anything private first. Rendered as code automatically.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues
+          required: true
+        - label: I removed prompt text, paths and anything private from this report
+          required: true
+        - label: I can reproduce this with no other plugin that draws above the prompt

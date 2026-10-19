@@ -1,0 +1,30 @@
+# Companion is a plugin-at-root repository: the repository root is the plugin folder
+# Claude Code loads, so anything a session or a tool writes here stays out of git.
+
+# Written by Claude Code when it loads the plugin (it also drops its own .gitignore there)
+.claude-plugin/types/
+# Where Claude Code unpacks MCP bundles
+.mcpb-cache/
+
+# Personal Claude Code files
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Type-checking and tooling
+node_modules/
+*.tsbuildinfo
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+
+# Misc
+*.tmp
+*.log

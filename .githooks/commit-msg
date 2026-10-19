@@ -1,0 +1,36 @@
+#!/bin/sh
+# Rejects commit messages that are not Conventional Commits.
+# Enable once per clone:  git config core.hooksPath .githooks
+# Never bypass with --no-verify; the PR title check on GitHub enforces the same rule anyway.
+
+msg_file="$1"
+first_line=$(sed -n '1p' "$msg_file")
+
+# Messages git generates itself are allowed through.
+case "$first_line" in
+  "Merge "*|"Revert \""*|"fixup! "*|"squash! "*) exit 0 ;;
+esac
+
+types='feat|fix|docs|chore|ci|refactor|perf|test|build|revert'
+scopes='capture|suggest|ui|settings|commands|tests|docs|ci|release|deps'
+pattern="^($types)(\(($scopes)\))?!?: [a-z0-9]"
+
+if ! printf '%s\n' "$first_line" | grep -Eq "$pattern"; then
+  echo "commit-msg: subject must be a Conventional Commit: type(scope): subject" >&2
+  echo "  types : feat fix docs chore ci refactor perf test build revert" >&2
+  echo "  scopes: capture suggest ui settings commands tests docs ci release deps" >&2
+  echo "  got   : $first_line" >&2
+  exit 1
+fi
+
+if printf '%s\n' "$first_line" | grep -Eq '\.$'; then
+  echo "commit-msg: no trailing period in the subject" >&2
+  exit 1
+fi
+
+if [ "${#first_line}" -gt 100 ]; then
+  echo "commit-msg: header is longer than 100 characters; aim for 72" >&2
+  exit 1
+fi
+
+exit 0
