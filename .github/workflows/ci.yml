@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plugin:
+    name: Validate and test
+    runs-on: ubuntu-latest
+    env:
+      # The build the plugin is checked against. Raise it on purpose, in its own pull request.
+      CLAUDE_CODE_VERSION: 2.1.303
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Claude Code
+        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      # Neither step needs a Claude login: the validator reads the files, and the tests run
+      # against Claude Code's test kit with the model, the clock and the store mocked.
+      - name: Validate the manifest, the marketplace file and the hooks module
+        run: claude plugin validate .
+
+      - name: Run the tests
+        run: claude plugin test .
