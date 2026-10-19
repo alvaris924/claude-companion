@@ -1,0 +1,8 @@
+{
+  "name": "claude-companion",
+  "owner": { "name": "Alvaris", "url": "https://github.com/alvaris924" },
+  "metadata": {
+    "description": "Companion, a Claude Code plugin that keeps your last prompt in view and suggests your next message as choices you click."
+  },
+  "plugins": [{ "name": "companion", "source": "./" }]
+}
