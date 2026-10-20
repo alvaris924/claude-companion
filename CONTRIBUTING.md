@@ -29,7 +29,7 @@ To try your checkout, start Claude Code with `claude --plugin-dir <path to the c
 
 - [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject`.
   - Types: `feat`, `fix`, `docs`, `chore`, `ci`, `refactor`, `perf`, `test`, `build`, `revert`.
-  - Scopes: `capture` (recording the last prompt), `suggest` (the suggested next messages), `ui` (the band, panes and notices), `settings`, `commands`, `tests`, `docs`, `ci`, `release`, `deps`.
+  - Scopes: `capture` (recording the last prompt), `suggest` (the suggested next messages), `route` (fitting the model and effort to each task), `ui` (the band, panes and notices), `settings`, `commands`, `tests`, `docs`, `ci`, `release`, `deps`.
 - Subject in the imperative mood, lowercase first letter, no trailing period, at most 72 characters. The body explains why, not what.
 - Breaking changes: `feat(settings)!: ...` plus a `BREAKING CHANGE:` footer.
 - Author commits with your GitHub no-reply address (`<id>+<user>@users.noreply.github.com`) rather than a personal email; every pushed commit shows it.

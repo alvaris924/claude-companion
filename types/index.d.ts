@@ -4,8 +4,33 @@ export type LastPrompt = { text: string; at: number; isFromProgram: boolean }
 /** The suggested next messages, one to five, the likeliest first: one model call after each main-thread turn. */
 export type Suggestion = { choices: string[]; at: number }
 
-/** The settings as the settings pane saves them in the plugin's store: each picker's value. */
-export type StoredSettings = { suggest: boolean; model: string; effort: string; choices: string; onPress: string }
+/**
+ * The settings as the settings pane saves them in the plugin's store: each picker's value. `route` fits each task's
+ * model and effort, `light` and `heavy` say how.
+ */
+export type StoredSettings = {
+  suggest: boolean
+  model: string
+  effort: string
+  choices: string
+  onPress: string
+  route: boolean
+  light: string
+  heavy: string
+}
+
+/**
+ * A turn fitted to its task: how the task was graded, the model and effort its requests went with, and the session's
+ * own model and effort they would have gone with. An effort is null where the request named none.
+ */
+export type RoutedTurn = {
+  level: 'light' | 'heavy'
+  model: string
+  effort: string | null
+  ownModel: string
+  ownEffort: string | null
+  at: number
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -15,6 +40,8 @@ declare module 'claude-code' {
       paneClosed: boolean
       /** The settings as last read from the store or picked, for the settings pane to draw; null until read. */
       settings: StoredSettings | null
+      /** The last turn, while it ran on another model or effort than the session's own to fit its task; else null. */
+      routed: RoutedTurn | null
     }
   }
 }

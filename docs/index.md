@@ -24,10 +24,11 @@ Companion is a Claude Code plugin that keeps the person's last prompt in view an
 - [ADR-0006: Settings live in the plugin store](adr/0006-settings-in-the-plugin-store.md)
 - [ADR-0007: Sonnet 5.5 is the default model](adr/0007-sonnet-default.md)
 - [ADR-0008: GitHub flow with tags, no development branch](adr/0008-branching-model.md)
+- [ADR-0009: Fit the model and effort to each task, by rules, under 100,000 tokens](adr/0009-model-and-effort-per-task.md)
 
 ## The band
 
-The band directly above the prompt box shows `Last:` and the last prompt, a dim ⚙ that opens the settings and, once an answer is in, `Next:` and the choices. The terminal cuts the prompt and each choice to its measured width. VS Code, the desktop app and the mobile app lay text out in their own fonts, where the columns they report undercount the room, so there the texts are handed over whole and wrap, a choice wrapping inside its button. The band steps aside while Claude Code shows a survey in the same place.
+The band directly above the prompt box shows `Last:` and the last prompt, a dim ⚙ that opens the settings and, once an answer is in, `Next:` and the choices. When the last turn ran on something other than the session's own model and effort, a dim row under the last prompt says what, with a redo button for a light task. The terminal cuts the prompt and each choice to its measured width. VS Code, the desktop app and the mobile app lay text out in their own fonts, where the columns they report undercount the room, so there the texts are handed over whole and wrap, a choice wrapping inside its button. The band steps aside while Claude Code shows a survey in the same place.
 
 ## Suggested next messages
 
@@ -37,9 +38,27 @@ The reply is cut into clean choices. List markers, quotes and "Next:" lead-ins a
 
 Clicking a choice sends it as the person's message or, when the settings say so, puts it in the prompt box: over an empty box or an earlier choice, otherwise at the cursor, so what the person typed stays. Where no box takes it, the choice goes to the clipboard.
 
+## The model and effort for each task
+
+Off by default. Turned on in the settings, each prompt of the person's is graded by rules, with no model call:
+
+| Grade | When | Its turns run on |
+|---|---|---|
+| Heavy | It asks to implement, refactor, migrate, redesign, rewrite, overhaul or scaffold, to start from scratch or to take on the whole codebase; or it runs past 250 words or names four paths or more | The session's model one effort level up, `max` at most; or, as a separate pick, one model up as well, on the ladder Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.1 |
+| Light | A question, or a request to explain or list, of at most 25 words, with nothing broken in it, nothing pasted and at most one path | Haiku 5.5 at low effort, when the session runs on a Sonnet, Opus or Fable model; or, as a separate pick, as usual |
+| Standard | Everything else | As usual |
+
+The grade belongs to the task, not to each prompt. A reply continues the running task: a clicked choice, a typed one, or up to six words that ask for no new work. A follow-up of up to 40 words to heavy work stays heavy. Anything else starts a task of its own grade. Turns nobody typed, such as a background task's notification, continue the running task.
+
+A task changes model or effort only while the conversation is under 100,000 tokens, decided at its first request and kept for the task. Caches belong to one model, so a switch makes the API read the conversation once without its cache. Below 100,000 tokens, Haiku 5.5's uncached read costs no more than a cached read on Sonnet 5.5, Opus 5.5 or Fable 5.1; above it, Haiku's price rises fivefold. A change of effort also makes the API read the conversation uncached, at the session model's price, which is why a light task switches model instead of lowering the effort ([ADR-0009](adr/0009-model-and-effort-per-task.md)).
+
+Left as they are: standard tasks, subagents, slash commands and skills, prompts a program sends where nothing is drawn (`claude -p`, the Agent SDK), models the plugin cannot read, such as a provider's own spelling of an id, and a request the engine sends on another model in the middle of a turn, such as a fallback. A fitted request that fails before it answers, as when an organization blocks the model, goes again as the engine made it; fitting then stops for the rest of the session, and a notice says so.
+
+When a turn ran on something other than the session's own model and effort, the band says what under the last prompt ("Light task: Haiku 5.5 at low effort") until the next prompt. For a light task, once the turn has ended, a button beside it asks the last prompt again on the session's own model and effort, and that task's follow-ups stay there. Where no surface attaches, the same words lead the line beneath the answer.
+
 ## Settings
 
-`/companion`, or the ⚙ in the band, opens a pane of pickers:
+`/companion`, or the ⚙ in the band, opens a pane of pickers in two groups, the suggested next messages and the model and effort for each task:
 
 | Setting | Options | Default |
 |---|---|---|
@@ -48,8 +67,11 @@ Clicking a choice sends it as the person's message or, when the settings say so,
 | Thinking effort | Low, medium, high | Low |
 | Number of choices | 1 to 5 | 3 |
 | Clicking a choice | Sends it as my message, puts it in the box to edit | Sends it |
+| Fit model and effort to each task | On, off | Off |
+| Light tasks | Haiku 5.5 at low effort, my model and effort | Haiku 5.5 at low effort |
+| Heavy tasks | My model one effort level up, one model and one effort level up, my model and effort | My model, one effort level up |
 
-A pick is saved at once for every session, and other open sessions take it at their next answer. The mobile app draws no pickers, so its pane lists the settings as text; where no pane can be drawn at all, `/companion` answers with the settings on one line.
+The model and effort of the suggestions are their own: fitting the person's turns to their tasks leaves them alone. A pick is saved at once for every session, and other open sessions take it at their next turn. The mobile app draws no pickers, so its pane lists the settings as text; where no pane can be drawn at all, `/companion` answers with the settings on one line.
 
 ## Commands
 
@@ -67,7 +89,7 @@ A pick is saved at once for every session, and other open sessions take it at th
 | VS Code extension, 2.1.300 or newer | The band, its texts whole and wrapping; the prompt box shows no dim suggestion there |
 | Desktop app | The band |
 | Mobile app | A pane with the last prompt and the choices, opened at the first prompt; `/last-prompt` brings it back after it was closed |
-| A host that draws no plugin UI, such as VS Code before 2.1.300 | The choices as a line beneath the answer |
+| A host that draws no plugin UI, such as VS Code before 2.1.300 | The choices, and what a fitted turn ran on, as a line beneath the answer |
 | Headless runs (`claude -p`, the Agent SDK) | Nothing, and no model call |
 
 ## Where things are stored
@@ -77,6 +99,7 @@ A pick is saved at once for every session, and other open sessions take it at th
 | The last prompt | Session state `companion.last` | The session |
 | The current choices | Session state `companion.next` | Until the next prompt |
 | Whether the person closed the mobile pane | Session state `companion.paneClosed` | The session |
+| What the last turn ran on, when it was fitted to its task | Session state `companion.routed` | Until the next prompt |
 | The settings | The plugin's store, key `settings`, mirrored in session state `companion.settings` | Across sessions |
 
 Nothing is written anywhere else, and the plugin makes no network requests of its own: its one call out is the model request, made through Claude Code on the person's account.
@@ -96,4 +119,6 @@ The contribution workflow is in [CONTRIBUTING.md](../CONTRIBUTING.md); rules for
 
 - **No band in VS Code.** The extension draws plugin UI from 2.1.300; older builds show the choices as a line beneath the answer.
 - **No suggestions at all.** Check that suggestions are on in `/companion`, and that the session is not a headless run. `claude --debug` logs a line for every hook that failed.
+- **A light task needed more than Haiku.** Press the redo button beside the task in the band, which asks again on your own model and effort. If it happens often, set Light tasks to "My model and effort" in `/companion`, or turn fitting off.
+- **A notice says a task could not be sent to a model.** That model is not available to the session, for instance because an organization blocks it. Fitting is off for the rest of that session; pick Light and Heavy tasks that avoid that model.
 - **A tool Claude Code serves on `127.0.0.1` never appears**, such as the plugin-authoring skill's secret scan. Some antivirus web filters rewrite the responses of local HTTP servers. Seen with Norton's web protection on Windows: responses to requests that look like MCP traffic came back marked as chunked without being chunked, so every `tools/list` failed with `InvalidHTTPResponse` in the debug log. An exception for `127.0.0.1` in the antivirus's web protection fixed it.

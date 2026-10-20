@@ -1,7 +1,15 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PromptOrigin, Register, SelectOption } from 'claude-code'
+import type {
+  EngineInterface,
+  PromptOrigin,
+  Register,
+  SelectOption,
+  TurnStepChunk,
+  TurnStepInput,
+  TurnStepResult,
+} from 'claude-code'
 
-import type { LastPrompt, StoredSettings, Suggestion } from '../types'
+import type { LastPrompt, RoutedTurn, StoredSettings, Suggestion } from '../types'
 
 // The companion: the person's one Claude Code mod, the home of every small helper around the prompt.
 //
@@ -14,6 +22,11 @@ import type { LastPrompt, StoredSettings, Suggestion } from '../types'
 // next, the likeliest first. The band shows them as choices under the last prompt; clicking one sends it as the
 // person's own words, or puts it in the prompt box to edit. The likeliest is also offered dim in the prompt box where
 // the box shows suggestions (the terminal), Tab to take; VS Code 2.1.300 shows none there.
+//
+// Task routing, off by default: each prompt of the person's is graded light, standard or heavy by rules, with no model
+// call, and the turns of its task run to fit. A turn.step hook sends a light task's requests to Haiku 5.5 at low effort
+// and a heavy task's one effort level up, one model up too when picked, while the conversation is under 100,000 tokens.
+// The band says what a fitted turn ran on, with a button that asks the prompt again as usual.
 //
 // Settings: suggestions on or off, the model, its effort, how many choices, what a click does. /companion, or the ⚙ in
 // the band, opens a settings pane; each pick goes to this mod's own store ($.store), kept across sessions and read
@@ -86,13 +99,54 @@ const EXAMPLES: readonly { end: string; lines: readonly string[] }[] = [
   },
 ]
 
-/** The settings the pane changes; stored as their pickers' values (`choices` as text, `suggest` as a boolean). */
+// Task routing: a light task leaves the session's model for Haiku 5.5 at low effort; a heavy one climbs one effort
+// level, and one model too when the settings say so.
+const LIGHT_MODEL = 'claude-haiku-5-5'
+const LIGHT_EFFORT = 'low'
+// The current models from the cheapest to the most capable: "one model up" for a heavy task.
+const MODEL_LADDER: readonly string[] = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1']
+const EFFORT_LADDER = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+// A first-party id of a Claude model priced above Haiku: what a light task may leave. An id the plugin cannot read (a
+// provider's own spelling, a family it does not know) keeps its model.
+const ABOVE_HAIKU = /^claude-(?:sonnet|opus|fable)-\d/
+// Caches belong to one model, so a switch sends the whole conversation to a model that has not cached it. Below Haiku
+// 5.5's long-context price line, 100K prompt tokens, that costs no more than a cached read on Sonnet, Opus or Fable;
+// above it Haiku costs five times as much. Raising the effort makes the API read the conversation uncached once, so the
+// same line holds for it.
+const ROUTE_MAX_CONTEXT_TOKENS = 100_000
+// Words that start substantial work: building code, reshaping it, moving it, or taking on all of it.
+const HEAVY_WORK =
+  /\b(?:implement(?:s|ed|ing)?|refactor(?:s|ed|ing)?|re-?architect(?:s|ed|ing)?|migrat(?:e|es|ed|ing)|redesign(?:s|ed|ing)?|rewrit(?:e|es|ing|ten)|rewrote|overhaul(?:s|ed|ing)?|scaffold(?:s|ed|ing)?|from scratch|(?:whole|entire) (?:code ?base|repo(?:sitory)?|project|app))\b/i
+// Lead-ins that soften a request without changing it: "ok", "please", "can you", "let's".
+const SOFT_LEAD = /^(?:(?:ok(?:ay)?|so|and|also|now|hey|please|pls|can you|could you|would you|will you|can we|could we|let'?s)\b[\s,:]*)+/i
+// What a question or a request to explain leads with: a question word, or a verb that asks for words, not work.
+const QUESTION_LEAD = /^(?:what|what's|whats|how|where|which|when|who|whose|explain|summari[sz]e|describe|define|list|remind me|tell me|show me)\b/i
+// A yes-or-no question leads with one of these and ends with "?": "does it handle tabs?" ("do the release" is work).
+const YES_NO_LEAD = /^(?:is|are|was|were|does|do|did|has|have|should|would|could|can|will)\b/i
+// Signs of something broken: a question about it asks for debugging, which is no light task.
+const DEBUG_SIGNS =
+  /\b(?:errors?|exceptions?|traceback|stack ?trace|fail(?:s|ed|ing|ure)?|broken|bugs?|crash(?:es|ed|ing)?|regression|flaky|wrong|(?:not|doesn'?t|does not|won'?t|can'?t) work(?:ing)?)\b/i
+// A file or a path the prompt names: "src/a.ts", "README.md".
+const PATH_LIKE =
+  /(?:[\w.-]+\/)+[\w.-]+|\b[\w-]+\.(?:tsx?|jsx?|mjs|cjs|json|md|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|ya?ml|toml|css|scss|html|sql|txt|xml|vue|svelte|lock)\b/gi
+const LIGHT_MAX_WORDS = 25
+const HEAVY_MIN_WORDS = 250
+const HEAVY_MIN_PATHS = 4
+// A reply this short continues the running task, and so does a follow-up of up to this many words to heavy work.
+const REPLY_MAX_WORDS = 6
+const HEAVY_FOLLOW_UP_MAX_WORDS = 40
+
+/** The settings the pane changes; stored as their pickers' values (`choices` as text, the switches as booleans). */
 type Settings = {
   suggest: boolean
   model: string
   effort: 'low' | 'medium' | 'high'
   choices: number
   onPress: 'send' | 'box'
+  /** Whether each task's turns run on a model and effort that fit it. */
+  route: boolean
+  light: 'haiku' | 'keep'
+  heavy: 'effort' | 'model' | 'keep'
 }
 
 const MODELS: readonly SelectOption[] = [
@@ -115,11 +169,21 @@ const ON_OFF: readonly SelectOption[] = [
   { value: 'on', label: 'On' },
   { value: 'off', label: 'Off' },
 ]
+const LIGHT_ROUTES: readonly SelectOption[] = [
+  { value: 'haiku', label: 'Haiku 5.5 at low effort' },
+  { value: 'keep', label: 'My model and effort' },
+]
+const HEAVY_ROUTES: readonly SelectOption[] = [
+  { value: 'effort', label: 'My model, one effort level up' },
+  { value: 'model', label: 'One model and one effort level up' },
+  { value: 'keep', label: 'My model and effort' },
+]
 
 const last = atom({ plugin: 'companion', key: 'last' } as const, null)
 const suggested = atom({ plugin: 'companion', key: 'next' } as const, null)
 const paneClosed = atom({ plugin: 'companion', key: 'paneClosed' } as const, false)
 const savedSettings = atom({ plugin: 'companion', key: 'settings' } as const, null)
+const routed = atom({ plugin: 'companion', key: 'routed' } as const, null)
 
 // Prompts the machine sends on its own. Every other origin (the composer, the bridge, the SDK host,
 // an unclassified channel such as an editor extension) is the person typing.
@@ -146,6 +210,33 @@ let epoch = 0
 // The settings in force, as last read from the store (or picked in the pane).
 let settings: Settings = settingsFrom({})
 
+/** How much a task asks of the model, graded from the person's prompt. */
+export type TaskLevel = 'light' | 'standard' | 'heavy'
+/** The running task: its level, and whether its turns may change model or effort, decided at its first request. */
+type Task = { level: TaskLevel; mayChange?: boolean }
+/** What the settings give a light and a heavy task. */
+type Routes = Pick<Settings, 'light' | 'heavy'>
+/** The model and effort a fitted turn's requests go with, beside the session's own that its first request named. */
+type Plan = {
+  level: 'light' | 'heavy'
+  model: string
+  effort: TurnStepInput['effort']
+  ownModel: string
+  ownEffort: TurnStepInput['effort']
+}
+/** A main-loop turn the settings fit: its task, the routes, and its plan once its first request decided one. */
+type FittedTurn = { task: Task; routes: Routes; plan?: Plan | null }
+/** What the next turn takes from the prompt that starts it: a graded task, or nothing (a command, a program). */
+type Pending = { kind: 'task'; level: TaskLevel; isNew: boolean } | { kind: 'skip' }
+
+// The task the person is on, and what their last prompt asked of the next turn; undefined continues the task.
+let task: Task | null = null
+let pending: Pending | undefined
+// The main-loop turns being fitted, by turn id, until they complete.
+const fitted = new Map<string, FittedTurn>()
+// Set once a fitted request failed before it answered: the rest of the session's turns go as the engine makes them.
+let isFitRefused = false
+
 /** `value` when it is one of `options`' values, else `fallback`. */
 export function pick(value: unknown, options: readonly SelectOption[], fallback: string): string {
   return typeof value === 'string' && options.some(option => option.value === value) ? value : fallback
@@ -159,6 +250,9 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
     effort: pick(stored.effort, EFFORTS, 'low') as Settings['effort'],
     choices: Number(pick(stored.choices, CHOICE_COUNTS, '3')),
     onPress: pick(stored.onPress, PRESS_ACTIONS, 'send') as Settings['onPress'],
+    route: typeof stored.route === 'boolean' ? stored.route : false,
+    light: pick(stored.light, LIGHT_ROUTES, 'haiku') as Settings['light'],
+    heavy: pick(stored.heavy, HEAVY_ROUTES, 'effort') as Settings['heavy'],
   }
 }
 
@@ -192,9 +286,13 @@ export function labelOf(options: readonly SelectOption[], value: string): string
 
 /** The settings on one line of plain text, for a host that draws no pane. */
 export function settingsLine(current: Settings): string {
+  const routing = current.route
+    ? `on (light tasks: ${labelOf(LIGHT_ROUTES, current.light)}; heavy tasks: ${labelOf(HEAVY_ROUTES, current.heavy)})`
+    : 'off'
   return (
     `Suggestions: ${current.suggest ? 'on' : 'off'} · Model: ${labelOf(MODELS, current.model)} · ` +
-    `Effort: ${current.effort} · Choices: ${current.choices} · Clicking a choice: ${labelOf(PRESS_ACTIONS, current.onPress)}`
+    `Effort: ${current.effort} · Choices: ${current.choices} · Clicking a choice: ${labelOf(PRESS_ACTIONS, current.onPress)} · ` +
+    `Fit to the task: ${routing}`
   )
 }
 
@@ -299,6 +397,7 @@ export async function recordPrompt($: EngineInterface, text: string, isFromProgr
   const prompt: LastPrompt = { text, at: await $.clock.now(), isFromProgram }
   await update($, last, () => prompt)
   await update($, suggested, () => null)
+  await update($, routed, () => null)
   await openPaneWhereNoBand($)
 }
 
@@ -363,6 +462,7 @@ export async function sendChoice($: EngineInterface, text: string): Promise<void
 
   // Recorded here: the prompt hook below never sees this mod's own submit.
   await recordPrompt($, text, false)
+  pending = undefined // a choice continues the task it answers
   await $.prompt.submit({ text, asUser: true })
 }
 
@@ -436,12 +536,237 @@ export async function copyToHostClipboard($: EngineInterface, text: string): Pro
   }
 }
 
+/** How many words a text has. */
+export function wordsIn(text: string): number {
+  return text.split(/\s+/).filter(word => word.length > 0).length
+}
+
+/**
+ * How much a task asks of the model, from the prompt that starts it: heavy for building, reshaping or moving code and
+ * for long prompts or many paths; light for a short question or a request to explain, with nothing broken in it and
+ * nothing pasted; standard otherwise.
+ */
+export function gradeTask(text: string): TaskLevel {
+  const words = wordsIn(text)
+  const paths = new Set((text.match(PATH_LIKE) ?? []).map(path => path.toLowerCase())).size
+  if (HEAVY_WORK.test(text) || words > HEAVY_MIN_WORDS || paths >= HEAVY_MIN_PATHS) return 'heavy'
+
+  const asked = text.trim().replace(SOFT_LEAD, '')
+  const isQuestion = QUESTION_LEAD.test(asked) || (YES_NO_LEAD.test(asked) && /\?\s*$/.test(asked))
+  const isPlain =
+    words <= LIGHT_MAX_WORDS && paths <= 1 && text.trim().split('\n').length <= 2 && !text.includes('```') && !DEBUG_SIGNS.test(text)
+  return isQuestion && isPlain ? 'light' : 'standard'
+}
+
+/** Whether a prompt only answers the last turn: one of its choices, or a few words that start no new work. */
+export function isReply(text: string, choices: readonly string[]): boolean {
+  const same = (said: string) => said.trim().toLowerCase().replace(/[.!?]+$/, '')
+  if (choices.some(choice => same(choice) === same(text))) return true
+  return wordsIn(text) <= REPLY_MAX_WORDS && !HEAVY_WORK.test(text)
+}
+
+/**
+ * The level of the task a prompt works on: its own grade when it starts a task, the running task's when it answers
+ * the last turn or follows up heavy work. `isNew` says a task starts, so its first request decides afresh.
+ */
+export function nextLevel(text: string, running: TaskLevel | null, choices: readonly string[]): { level: TaskLevel; isNew: boolean } {
+  const graded = gradeTask(text)
+  if (running === null) return { level: graded, isNew: true }
+  if (isReply(text, choices)) return { level: running, isNew: false }
+  if (running === 'heavy' && graded !== 'heavy' && wordsIn(text) <= HEAVY_FOLLOW_UP_MAX_WORDS) return { level: running, isNew: false }
+  return { level: graded, isNew: true }
+}
+
+/** Grades the person's prompt for the turn it starts; a command's or a program's prompt leaves that turn alone. */
+export async function noteTask($: EngineInterface, text: string, isLeftAlone: boolean): Promise<void> {
+  if (isLeftAlone) {
+    pending = { kind: 'skip' }
+    return
+  }
+  const choices = (await read($, suggested))?.choices ?? []
+  pending = { kind: 'task', ...nextLevel(text, task?.level ?? null, choices) }
+}
+
+/** A main-loop turn begins: it takes its task from the prompt that started it, and is fitted when `routes` are given. */
+export function startTurn(turnId: string, routes: Routes | undefined): void {
+  const decided = pending
+  pending = undefined
+  if (decided?.kind === 'skip') return
+  if (decided?.kind === 'task' && (decided.isNew || task === null)) task = { level: decided.level }
+  if (task !== null && routes !== undefined && !isFitRefused) fitted.set(turnId, { task, routes })
+}
+
+/** The session's context fill in tokens: 0 before the first reading, unbounded where it cannot be read. */
+export async function contextTokens($: EngineInterface): Promise<number> {
+  try {
+    return (await $.session.usage()).context.tokens ?? 0
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+}
+
+/** A model id without the context-window mark some carry ("claude-opus-5-5[1m]"). */
+export function baseModel(model: string): string {
+  return model.replace(/\[[^\]]*\]$/, '')
+}
+
+/** A model's short name as the settings show it ("Sonnet 5.5"); the id itself for a model they do not list. */
+export function modelName(model: string): string {
+  const label = MODELS.find(option => option.value === baseModel(model))?.label
+  return label === undefined ? model : (label.split(':')[0] ?? label)
+}
+
+/** One effort level up, `max` at most; a number, or no effort at all, stays as it is. */
+export function raisedEffort(effort: TurnStepInput['effort']): TurnStepInput['effort'] {
+  if (typeof effort !== 'string') return effort
+  const at = EFFORT_LADDER.indexOf(effort)
+  return at < 0 ? effort : (EFFORT_LADDER[Math.min(at + 1, EFFORT_LADDER.length - 1)] ?? effort)
+}
+
+/** One model up the ladder, Fable 5.1 at its top; a model off the ladder stays as it is. */
+export function steppedUp(model: string): string {
+  const at = MODEL_LADDER.indexOf(baseModel(model))
+  return at < 0 ? model : (MODEL_LADDER[at + 1] ?? model)
+}
+
+/** What a task's turns go with in place of the session's own model and effort; null leaves them as they are. */
+export function routeFor(
+  level: TaskLevel,
+  routes: Routes,
+  own: Pick<TurnStepInput, 'model' | 'effort'>,
+): Pick<Plan, 'model' | 'effort'> | null {
+  if (level === 'light') {
+    const isLighter = routes.light === 'haiku' && ABOVE_HAIKU.test(baseModel(own.model))
+    return isLighter ? { model: LIGHT_MODEL, effort: LIGHT_EFFORT } : null
+  }
+  if (level === 'standard' || routes.heavy === 'keep') return null
+
+  const model = routes.heavy === 'model' ? steppedUp(own.model) : own.model
+  const effort = raisedEffort(own.effort)
+  return model === own.model && effort === own.effort ? null : { model, effort }
+}
+
+/** Decides a fitted turn at its first request: what its task's level gets, while the conversation is small enough. */
+export async function planTurn($: EngineInterface, turn: FittedTurn, e: TurnStepInput): Promise<Plan | null> {
+  const level = turn.task.level
+  const route = routeFor(level, turn.routes, e)
+  if (route === null || level === 'standard') return null
+
+  // Decided once per task: a task that changed model or effort keeps it, as going back would cost a cache write too.
+  turn.task.mayChange ??= (await contextTokens($)) < ROUTE_MAX_CONTEXT_TOKENS
+  return turn.task.mayChange ? { level, ...route, ownModel: e.model, ownEffort: e.effort } : null
+}
+
+/** A plan as the band keeps it. */
+export function routedOf(plan: Plan, at: number): RoutedTurn {
+  const named = (effort: TurnStepInput['effort']) => (effort === undefined ? null : String(effort))
+  return { level: plan.level, model: plan.model, effort: named(plan.effort), ownModel: plan.ownModel, ownEffort: named(plan.ownEffort), at }
+}
+
+/** Shows in the band what a fitted turn runs on, or nothing when it runs as usual. */
+export async function showPlan($: EngineInterface, plan: Plan | null): Promise<void> {
+  const shown = plan === null ? null : routedOf(plan, await $.clock.now())
+  await update($, routed, current => (current === null && shown === null ? current : shown))
+}
+
+/** The model and effort a request of a fitted turn goes with; undefined sends it as the engine made it. */
+export async function routedStep($: EngineInterface, e: TurnStepInput): Promise<Pick<TurnStepInput, 'model' | 'effort'> | undefined> {
+  const turn = e.agentId === undefined ? fitted.get(e.turnId) : undefined
+  if (turn === undefined) return undefined
+  if (turn.plan === undefined) {
+    turn.plan = await planTurn($, turn, e)
+    await showPlan($, turn.plan)
+  }
+
+  const { plan } = turn
+  // A request on another model than the turn's first is the engine's own choice, a fallback: it stands.
+  if (plan === null || e.model !== plan.ownModel) return undefined
+  return plan.effort === undefined ? { model: plan.model } : { model: plan.model, effort: plan.effort }
+}
+
+/**
+ * A fitted request failed before it answered, such as a model the person's organization blocks: this turn and the rest
+ * of the session go as the engine makes them, and the person hears why once.
+ */
+export async function giveUpFitting($: EngineInterface, turnId: string): Promise<void> {
+  const plan = fitted.get(turnId)?.plan
+  isFitRefused = true
+  fitted.clear()
+  await showPlan($, null)
+  const tried =
+    plan === undefined || plan === null
+      ? 'another model or effort'
+      : plan.model === plan.ownModel
+        ? `${String(plan.effort)} effort`
+        : modelName(plan.model)
+  $.ui.toast(`Could not send this task to ${tried}, so the session runs on its own model and effort from here.`)
+}
+
+/**
+ * Sends a request of a fitted turn: refitted when its first request decided so. One that fails before anything
+ * streams is sent again as the engine made it, unless the person interrupted it.
+ */
+export async function* fittedStream(
+  $: EngineInterface,
+  e: TurnStepInput,
+  fit: Pick<TurnStepInput, 'model' | 'effort'>,
+  send: (input: TurnStepInput) => AsyncGenerator<TurnStepChunk, TurnStepResult>,
+  signal: AbortSignal,
+): AsyncGenerator<TurnStepChunk, TurnStepResult> {
+  const stream = send({ ...e, ...fit })
+  let first: IteratorResult<TurnStepChunk, TurnStepResult>
+  try {
+    first = await stream.next()
+  } catch (error) {
+    if (signal.aborted) throw error
+    await giveUpFitting($, e.turnId)
+    return yield* send(e)
+  }
+  if (first.done && first.value.stopReason === null && !signal.aborted) {
+    // No response arrived and nobody interrupted: the request itself failed.
+    await giveUpFitting($, e.turnId)
+    return yield* send(e)
+  }
+  if (first.done) return first.value
+
+  yield first.value
+  return yield* stream
+}
+
+/** A fitted turn in words: "Light task: Haiku 5.5 at low effort". */
+export function describeRouted(turn: Pick<RoutedTurn, 'level' | 'model' | 'effort'>): string {
+  const runsOn = turn.effort === null ? modelName(turn.model) : `${modelName(turn.model)} at ${turn.effort} effort`
+  return `${turn.level === 'light' ? 'Light' : 'Heavy'} task: ${runsOn}`
+}
+
+/** The label of the button that asks the last prompt again as usual: on the session's model, or at its effort. */
+export function redoLabel(turn: RoutedTurn): string {
+  if (turn.model !== turn.ownModel) return `Redo on ${modelName(turn.ownModel)}`
+  return turn.ownEffort === null ? 'Redo as usual' : `Redo at ${turn.ownEffort} effort`
+}
+
+/** Asks the last prompt again on the session's own model and effort, once however often it is pressed. */
+export async function redoAsUsual($: EngineInterface): Promise<void> {
+  let wasFitted = false
+  await update($, routed, current => {
+    wasFitted = current !== null
+    return null
+  })
+  const prompt = await read($, last)
+  if (!wasFitted || prompt === null) return
+
+  // A new task at the person's own level: its follow-ups stay there.
+  pending = { kind: 'task', level: 'standard', isNew: true }
+  await recordPrompt($, prompt.text, prompt.isFromProgram)
+  await $.prompt.submit({ text: prompt.text, asUser: true })
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await loadSettings($)
     await $.command.register({
       name: 'companion',
-      description: 'Open the companion settings: suggestions, model, effort, choices, what a click does',
+      description: 'Open the companion settings: the suggested next messages, and fitting the model and effort to each task',
     })
     await $.command.register({
       name: 'last-prompt',
@@ -503,35 +828,67 @@ export const register: Register = on => {
     if ('drop' in result || MACHINE_ORIGINS.has(e.origin.kind)) return result
 
     const text = ownWords(e.text)
-    if (text.length > 0) await recordPrompt($, text, e.origin.kind === 'sdk')
+    if (text.length > 0) {
+      // A slash command's turns run as the command sets them, and a program nobody watches (claude -p, the Agent SDK
+      // with no surface) picked its own model. An SDK host's prompt with a surface attached, as from the Claude app,
+      // is the person's.
+      const isProgram = e.origin.kind === 'sdk' && (await $.session.surfaces()).length === 0
+      await noteTask($, text, e.command !== undefined || isProgram)
+      await recordPrompt($, text, e.origin.kind === 'sdk')
+    }
 
     return result
   }).catch(($, e, next) => next(e)) // a failure here never holds up the prompt
 
+  on('turn.start', async ($, e, next) => {
+    // The main loop's turns take their task from the prompt that started them; a subagent's are its own.
+    if (e.agentId === undefined) {
+      const current = await loadSettings($)
+      startTurn(e.turnId, current.route ? { light: current.light, heavy: current.heavy } : undefined)
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('turn.step', async function* ($, e, next) {
+    // A fitted turn's requests go with its task's model and effort; every other request as the engine made it.
+    const fit = await routedStep($, e)
+    if (fit === undefined) return yield* next(e)
+    return yield* fittedStream($, e, fit, input => next(input), next.signal)
+  }).catch(async function* ($, e, next) {
+    return yield* next(e) // a failure here sends the request as the engine made it
+  })
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    // Main-thread turns that answered: a subagent's report, an interrupted turn or a refusal suggests nothing; nor
-    // does anything when the person switched suggestions off.
+    const plan = e.agentId === undefined ? fitted.get(e.turnId)?.plan : undefined
+    fitted.delete(e.turnId)
+    // Main-thread turns that answered: a subagent's report, an interrupted turn or a refusal suggests nothing.
     if (e.agentId !== undefined || e.reason !== 'answer' || e.answer.trim().length === 0) return result
-    if (!(await loadSettings($)).suggest) return result
 
+    const current = await loadSettings($)
     const ask = epoch
     const prompt = await read($, last)
 
     if ((await $.session.surfaces()).length > 0) {
       // The band or the pane shows them: asked on a timer, so the end of the turn never waits on the model.
-      $.clock.after(1, () => {
-        void suggestNext($, ask, prompt?.text ?? '', e.answer)
-      })
+      if (current.suggest) {
+        $.clock.after(1, () => {
+          void suggestNext($, ask, prompt?.text ?? '', e.answer)
+        })
+      }
       return result
     }
 
-    // Nothing draws this mod's UI: the choices become the turn's text, which the engine shows as a notice beneath the
-    // answer. A program's prompt (claude -p, the Agent SDK) has nobody to read one.
+    // Nothing draws this mod's UI: what a fitted turn ran on and the choices become the turn's text, which the engine
+    // shows as a notice beneath the answer. A program's prompt (claude -p, the Agent SDK) has nobody to read one.
     if (prompt === null || prompt.isFromProgram) return result
-    const choices = await askNext($, ask, prompt.text, e.answer)
+    const choices = current.suggest ? await askNext($, ask, prompt.text, e.answer) : null
+    const lines = [
+      plan === undefined || plan === null ? '' : describeRouted(routedOf(plan, 0)),
+      choices === null ? '' : `${NEXT_LABEL}${numbered(choices)}`,
+    ].filter(line => line.length > 0)
 
-    return choices === null ? result : { ...result, text: `${NEXT_LABEL}${numbered(choices)}` }
+    return lines.length === 0 ? result : { ...result, text: lines.join('\n') }
   }).catch(($, e, next) => next(e))
 
   on('prompt.suggest', async ($, e, next) => {
@@ -556,7 +913,8 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const prompt = await read($, last)
     const idea = await read($, suggested)
-    if (e.props.hasSurvey || (prompt === null && idea === null)) return next(e)
+    const fit = await read($, routed)
+    if (e.props.hasSurvey || (prompt === null && idea === null && fit === null)) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
     // The terminal's columns are exact, so its lines are cut to fit. VS Code and the apps lay text out in their own
@@ -577,6 +935,18 @@ export const register: Register = on => {
               </Box>
             </Box>
             <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
+          </Box>
+        )}
+        {fit !== null && (
+          <Box key="fit" flexWrap="wrap" columnGap={1}>
+            <Box key="task" flexShrink={1}>
+              <Text dimColor wrap={isTerminal ? 'truncate-end' : 'wrap'}>
+                {describeRouted(fit)}
+              </Text>
+            </Box>
+            {fit.level === 'light' && !e.props.isWorking && prompt !== null && (
+              <Button key="redo" label={redoLabel(fit)} dimColor onPress={() => redoAsUsual($)} />
+            )}
           </Box>
         )}
         {idea !== null && isTerminal && (
@@ -611,6 +981,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const prompt = await read($, last)
     const idea = await read($, suggested)
+    const fit = await read($, routed)
     const { Box, Button, Text } = $.ui.resolve(e)
     // As in the band: cut to the terminal's exact columns, whole and wrapping everywhere else.
     const isTerminal = e.surface === 'terminal'
@@ -626,6 +997,16 @@ export const register: Register = on => {
             <Box key="prompt" flexShrink={1}>
               <Text>{oneLine(prompt.text, PANE_MAX_CHARS)}</Text>
             </Box>
+          </Box>
+        )}
+        {fit !== null && (
+          <Box key="fit" flexWrap="wrap" columnGap={1}>
+            <Box key="task" flexShrink={1}>
+              <Text dimColor>{describeRouted(fit)}</Text>
+            </Box>
+            {fit.level === 'light' && prompt !== null && (
+              <Button key="redo" label={redoLabel(fit)} dimColor onPress={() => redoAsUsual($)} />
+            )}
           </Box>
         )}
         {idea !== null && (
@@ -671,6 +1052,7 @@ export const register: Register = on => {
     const { Box, Select, Text } = $.ui.resolve(e)
     return (
       <Box flexDirection="column">
+        <Text dimColor>Suggested next messages</Text>
         <Select
           key="suggest"
           label="Suggest next messages"
@@ -694,7 +1076,17 @@ export const register: Register = on => {
           options={PRESS_ACTIONS}
           onSelect={value => changeSetting($, 'onPress', value)}
         />
-        <Text dimColor>Saved for every session; other open sessions take a change at their next answer.</Text>
+        <Text dimColor>Model and effort for each task</Text>
+        <Select
+          key="route"
+          label="Fit model and effort to each task"
+          value={current.route ? 'on' : 'off'}
+          options={ON_OFF}
+          onSelect={value => changeSetting($, 'route', value === 'on')}
+        />
+        <Select key="light" label="Light tasks" value={current.light} options={LIGHT_ROUTES} onSelect={value => changeSetting($, 'light', value)} />
+        <Select key="heavy" label="Heavy tasks" value={current.heavy} options={HEAVY_ROUTES} onSelect={value => changeSetting($, 'heavy', value)} />
+        <Text dimColor>Saved for every session; other open sessions take a change at their next turn.</Text>
       </Box>
     )
   })

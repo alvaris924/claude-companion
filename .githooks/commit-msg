@@ -12,13 +12,13 @@ case "$first_line" in
 esac
 
 types='feat|fix|docs|chore|ci|refactor|perf|test|build|revert'
-scopes='capture|suggest|ui|settings|commands|tests|docs|ci|release|deps'
+scopes='capture|suggest|route|ui|settings|commands|tests|docs|ci|release|deps'
 pattern="^($types)(\(($scopes)\))?!?: [a-z0-9]"
 
 if ! printf '%s\n' "$first_line" | grep -Eq "$pattern"; then
   echo "commit-msg: subject must be a Conventional Commit: type(scope): subject" >&2
   echo "  types : feat fix docs chore ci refactor perf test build revert" >&2
-  echo "  scopes: capture suggest ui settings commands tests docs ci release deps" >&2
+  echo "  scopes: capture suggest route ui settings commands tests docs ci release deps" >&2
   echo "  got   : $first_line" >&2
   exit 1
 fi
