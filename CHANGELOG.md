@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Added
 
+- Skills and web searches among the choices: the choices after the first can run one of the session's skills or slash commands, or ask Claude to find a skill or search the web. The session's commands go with the suggestion request as one cached block, a choice naming a command the session lacks is dropped, and a command that would end the session or clear the conversation is never offered. On by default, with a switch in `/companion` (#10).
 - The model and effort fitted to each task, off by default: turned on in `/companion`, each task is graded from the person's prompt by rules, a light question goes to Haiku 5.5 at low effort, and heavy work runs one effort level up, or one model up as well when picked, while the conversation is under 100,000 tokens. The band says what a fitted turn ran on, with a redo on the session's own model and effort for a light task (#9).
 
 ## [0.9.0] - 2026-10-19

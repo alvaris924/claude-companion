@@ -1,5 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type {
+  CommandInfo,
   EngineInterface,
   PromptOrigin,
   Register,
@@ -22,6 +23,10 @@ import type { LastPrompt, RoutedTurn, StoredSettings, Suggestion } from '../type
 // next, the likeliest first. The band shows them as choices under the last prompt; clicking one sends it as the
 // person's own words, or puts it in the prompt box to edit. The likeliest is also offered dim in the prompt box where
 // the box shows suggestions (the terminal), Tab to take; VS Code 2.1.300 shows none there.
+//
+// Skills and searches: the lines after the first may run one of the session's skills or commands, which go with the
+// request as one cached block, or ask Claude to find a skill or search the web. Claude's own tools do that finding: the
+// plugin makes no network requests. A choice that names a command the session lacks is dropped.
 //
 // Task routing, off by default: each prompt of the person's is graded light, standard or heavy by rules, with no model
 // call, and the turns of its task run to fit. A turn.step hook sends a light task's requests to Haiku 5.5 at low effort
@@ -99,6 +104,18 @@ const EXAMPLES: readonly { end: string; lines: readonly string[] }[] = [
   },
 ]
 
+// Skills and searches among the choices: the session's commands go with the request as one cached block, cut to size.
+const CATALOGUE_MAX_COMMANDS = 80
+const CATALOGUE_DESCRIPTION_CHARS = 100
+const CATALOGUE_MAX_CHARS = 8000
+// This mod's own commands, never a choice.
+const OWN_COMMANDS: ReadonlySet<string> = new Set(['companion', 'last-prompt', 'copy-next'])
+// Commands no choice runs, whether the model names them or not: they end the session, sign out or throw the
+// conversation away. The list names what to drop, so a command the plugin has not met yet can still be offered.
+const NEVER_OFFERED: ReadonlySet<string> = new Set(['clear', 'reset', 'new', 'exit', 'quit', 'logout', 'login', 'rewind', 'resume', 'upgrade'])
+// A choice that runs a command: "/name", then its arguments.
+const COMMAND_LINE = /^\/([\w:.-]+)(?:\s+([\s\S]*))?$/
+
 // Task routing: a light task leaves the session's model for Haiku 5.5 at low effort; a heavy one climbs one effort
 // level, and one model too when the settings say so.
 const LIGHT_MODEL = 'claude-haiku-5-5'
@@ -139,6 +156,8 @@ const HEAVY_FOLLOW_UP_MAX_WORDS = 40
 /** The settings the pane changes; stored as their pickers' values (`choices` as text, the switches as booleans). */
 type Settings = {
   suggest: boolean
+  /** Whether the lines after the first may run a skill or a command, or ask Claude to find a skill or search the web. */
+  skills: boolean
   model: string
   effort: 'low' | 'medium' | 'high'
   choices: number
@@ -228,6 +247,10 @@ type Plan = {
 type FittedTurn = { task: Task; routes: Routes; plan?: Plan | null }
 /** What the next turn takes from the prompt that starts it: a graded task, or nothing (a command, a program). */
 type Pending = { kind: 'task'; level: TaskLevel; isNew: boolean } | { kind: 'skip' }
+/** The commands a choice may run: their lines for the request, and their names. */
+type Catalogue = { lines: string; names: ReadonlySet<string> }
+
+const NO_COMMANDS: Catalogue = { lines: '', names: new Set<string>() }
 
 // The task the person is on, and what their last prompt asked of the next turn; undefined continues the task.
 let task: Task | null = null
@@ -246,6 +269,7 @@ export function pick(value: unknown, options: readonly SelectOption[], fallback:
 export function settingsFrom(stored: Readonly<Record<string, unknown>>): Settings {
   return {
     suggest: typeof stored.suggest === 'boolean' ? stored.suggest : true,
+    skills: typeof stored.skills === 'boolean' ? stored.skills : true,
     model: pick(stored.model, MODELS, DEFAULT_MODEL),
     effort: pick(stored.effort, EFFORTS, 'low') as Settings['effort'],
     choices: Number(pick(stored.choices, CHOICE_COUNTS, '3')),
@@ -292,7 +316,7 @@ export function settingsLine(current: Settings): string {
   return (
     `Suggestions: ${current.suggest ? 'on' : 'off'} · Model: ${labelOf(MODELS, current.model)} · ` +
     `Effort: ${current.effort} · Choices: ${current.choices} · Clicking a choice: ${labelOf(PRESS_ACTIONS, current.onPress)} · ` +
-    `Fit to the task: ${routing}`
+    `Skills and searches: ${current.skills ? 'on' : 'off'} · Fit to the task: ${routing}`
   )
 }
 
@@ -318,14 +342,33 @@ export function cleanSuggestion(line: string): string {
   return META_LINE.test(bare) || bare.endsWith(':') ? '' : oneLine(bare, CHOICE_MAX_CHARS)
 }
 
-/** The model's reply cut to at most `count` different messages, in its order. */
-export function cleanChoices(raw: string, count: number): string[] {
+/** The command a choice runs, "/name args"; undefined for a plain message. */
+export function commandOf(text: string): { name: string; args: string } | undefined {
+  const match = COMMAND_LINE.exec(text.trim())
+  const name = match?.[1]
+  return name === undefined ? undefined : { name, args: (match?.[2] ?? '').trim() }
+}
+
+/** Whether a choice may be offered: a plain message, or a command `commands` lists (any, when not given) but the never-offered. */
+export function isOfferable(choice: string, commands?: ReadonlySet<string>): boolean {
+  const command = commandOf(choice)
+  if (command === undefined) return true
+
+  const name = command.name.toLowerCase()
+  return !NEVER_OFFERED.has(name) && (commands === undefined || commands.has(name))
+}
+
+/**
+ * The model's reply cut to at most `count` different messages, in its order. A line that runs a command stays only
+ * when `commands` lists it, where given, and it is no command a choice never runs.
+ */
+export function cleanChoices(raw: string, count: number, commands?: ReadonlySet<string>): string[] {
   const choices: string[] = []
   const seen = new Set<string>()
   for (const line of raw.split(/\r?\n/)) {
     const choice = cleanSuggestion(line)
     const same = choice.toLowerCase().replace(/[.!?]+$/, '')
-    if (choice.length === 0 || seen.has(same)) continue
+    if (choice.length === 0 || seen.has(same) || !isOfferable(choice, commands)) continue
 
     seen.add(same)
     choices.push(choice)
@@ -347,8 +390,59 @@ export function suggestSystem(count: number): string {
         'the likeliest first: each under 15 words, no numbering, quotes, labels or explanation.'
 }
 
-/** What the model reads: the end of the reply matters most, where the questions, offers and open items are. */
-export function suggestionPrompt(lastPrompt: string, reply: string, count: number): string {
+/** The rule that lets the lines after the first run a command, or ask Claude to find a skill or search the web. */
+export function skillsRule(hasCommands: boolean): string {
+  return (
+    'A line after the first may also be, even when the reply did not name it: ' +
+    (hasCommands
+      ? 'one of the commands in <commands>, written as /name and a short argument if it takes one, when running it is ' +
+        'the natural next step; '
+      : '') +
+    '"Find a skill for ..." when the work needs something the session has no command for; or "Search the web for ..." ' +
+    'when the reply guesses at something that changes over time, such as a library\'s current API or a version. Most ' +
+    'lines stay plain messages.\n\n'
+  )
+}
+
+/** The block of commands that opens the request: the same text every call, so the prompt cache serves it. */
+export function commandsBlock(lines: string): string {
+  return `<commands>\nThe slash commands the developer can run in this session:\n${lines}\n</commands>\n\n`
+}
+
+/** The session's commands a choice may run, one line each ("/name: what it does"), skills and the person's own first. */
+export async function commandCatalogue($: EngineInterface): Promise<Catalogue> {
+  let listed: readonly CommandInfo[]
+  try {
+    listed = await $.command.list()
+  } catch {
+    return NO_COMMANDS
+  }
+
+  const offered = listed.filter(
+    command => command.plugin !== 'companion' && !OWN_COMMANDS.has(command.name) && !NEVER_OFFERED.has(command.name.toLowerCase()),
+  )
+  // The typeahead lists the built-ins first; the skills and the person's own commands are what a choice is for.
+  const ordered = [...offered.filter(command => command.source !== 'builtin'), ...offered.filter(command => command.source === 'builtin')]
+  const lines: string[] = []
+  const names = new Set<string>()
+  let size = 0
+  for (const command of ordered) {
+    const said = oneLine(command.description, CATALOGUE_DESCRIPTION_CHARS)
+    const line = said.length > 0 ? `/${command.name}: ${said}` : `/${command.name}`
+    if (lines.length === CATALOGUE_MAX_COMMANDS || size + line.length > CATALOGUE_MAX_CHARS) break
+
+    lines.push(line)
+    names.add(command.name.toLowerCase())
+    size += line.length + 1
+  }
+  return { lines: lines.join('\n'), names }
+}
+
+/**
+ * What the model reads: the end of the reply matters most, where the questions, offers and open items are. With
+ * `skills`, the lines after the first may also run a command or ask for a skill or a search.
+ */
+export function suggestionPrompt(lastPrompt: string, reply: string, count: number, skills?: { hasCommands: boolean }): string {
   const prompt = lastPrompt.length > SUGGEST_PROMPT_CHARS ? `${lastPrompt.slice(0, SUGGEST_PROMPT_CHARS)}…` : lastPrompt
   const tail = reply.length > SUGGEST_REPLY_CHARS ? `…${reply.slice(-SUGGEST_REPLY_CHARS)}` : reply
   const others =
@@ -376,6 +470,7 @@ export function suggestionPrompt(lastPrompt: string, reply: string, count: numbe
     'The developer only asks Claude for things Claude can do, never for something the reply says is already done, ' +
     'never claims results they have not seen, and names no branch, file, number or tool the reply did not name. ' +
     'Never write as Claude: no "Want me to...", "Do you see...", "Should I...". Never thank.\n\n' +
+    (skills === undefined || count === 1 ? '' : skillsRule(skills.hasCommands)) +
     'Examples of the form, not the content:\n' +
     EXAMPLES.map(example => `Reply ends "${example.end}":\n${example.lines.slice(0, count).join('\n')}`).join('\n\n')
   )
@@ -407,10 +502,15 @@ export async function recordPrompt($: EngineInterface, text: string, isFromProgr
  */
 export async function askNext($: EngineInterface, ask: number, lastPrompt: string, reply: string): Promise<string[] | null> {
   const { model, effort, choices: count } = settings
+  // One choice is the likeliest message alone, under the tuned rules: it never runs a command.
+  const offersSkills = settings.skills && count > 1
   try {
+    const commands = offersSkills ? await commandCatalogue($) : NO_COMMANDS
+    const text = suggestionPrompt(lastPrompt, reply, count, offersSkills ? { hasCommands: commands.names.size > 0 } : undefined)
     const request = {
       system: suggestSystem(count),
-      prompt: suggestionPrompt(lastPrompt, reply, count),
+      // The commands open the request, the same text every call, so the prompt cache serves them after the first.
+      prompt: commands.names.size > 0 ? [{ text: commandsBlock(commands.lines), cache: true as const }, { text }] : text,
       maxTokens: SUGGEST_MAX_TOKENS,
       effort,
       timeoutMs: SUGGEST_TIMEOUT_MS,
@@ -421,7 +521,7 @@ export async function askNext($: EngineInterface, ask: number, lastPrompt: strin
     }
     if (ask !== epoch || !answer.isAnswered) return null
 
-    const choices = cleanChoices(answer.text, count)
+    const choices = cleanChoices(answer.text, count, offersSkills ? commands.names : undefined)
     if (choices.length === 0) return null
 
     const idea: Suggestion = { choices, at: await $.clock.now() }
@@ -451,7 +551,7 @@ export async function pressChoice($: EngineInterface, text: string, choices: rea
   await (onPress === 'box' ? putInBox($, text, choices) : sendChoice($, text))
 }
 
-/** Sends a choice as the person's own words, once however often the choices are pressed. */
+/** Sends a choice as the person's own words, or runs the command it names, once however often the choices are pressed. */
 export async function sendChoice($: EngineInterface, text: string): Promise<void> {
   let isTaken = false
   await update($, suggested, current => {
@@ -462,8 +562,19 @@ export async function sendChoice($: EngineInterface, text: string): Promise<void
 
   // Recorded here: the prompt hook below never sees this mod's own submit.
   await recordPrompt($, text, false)
-  pending = undefined // a choice continues the task it answers
-  await $.prompt.submit({ text, asUser: true })
+  const command = commandOf(text)
+  if (command === undefined) {
+    pending = undefined // a choice continues the task it answers
+    await $.prompt.submit({ text, asUser: true })
+    return
+  }
+
+  pending = { kind: 'skip' } // a command's turns run as the command sets them
+  try {
+    await $.command.run({ command: command.name, args: command.args })
+  } catch {
+    $.ui.toast(`Could not run ${text}`)
+  }
 }
 
 /**
@@ -1059,6 +1170,13 @@ export const register: Register = on => {
           value={current.suggest ? 'on' : 'off'}
           options={ON_OFF}
           onSelect={value => changeSetting($, 'suggest', value === 'on')}
+        />
+        <Select
+          key="skills"
+          label="Offer skills and web searches"
+          value={current.skills ? 'on' : 'off'}
+          options={ON_OFF}
+          onSelect={value => changeSetting($, 'skills', value === 'on')}
         />
         <Select key="model" label="Model" value={current.model} options={MODELS} onSelect={value => changeSetting($, 'model', value)} />
         <Select key="effort" label="Thinking effort" value={current.effort} options={EFFORTS} onSelect={value => changeSetting($, 'effort', value)} />

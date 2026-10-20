@@ -25,6 +25,7 @@ Companion is a Claude Code plugin that keeps the person's last prompt in view an
 - [ADR-0007: Sonnet 5.5 is the default model](adr/0007-sonnet-default.md)
 - [ADR-0008: GitHub flow with tags, no development branch](adr/0008-branching-model.md)
 - [ADR-0009: Fit the model and effort to each task, by rules, under 100,000 tokens](adr/0009-model-and-effort-per-task.md)
+- [ADR-0010: Skills and web searches among the choices, found by Claude's own tools](adr/0010-skills-and-searches-among-the-choices.md)
 
 ## The band
 
@@ -37,6 +38,12 @@ After each answer of the main conversation, the plugin asks one model for the me
 The reply is cut into clean choices. List markers, quotes and "Next:" lead-ins are stripped; lines that talk about the exchange instead of being a message ("The reply asks…") and repeats are dropped; at most the chosen number of choices is kept, the likeliest first. In the terminal the likeliest is also offered dim in the prompt box, where Tab takes it, and Claude Code's own guess there is replaced by it, so the two agree.
 
 Clicking a choice sends it as the person's message or, when the settings say so, puts it in the prompt box: over an empty box or an earlier choice, otherwise at the cursor, so what the person typed stays. Where no box takes it, the choice goes to the clipboard.
+
+## Skills and web searches among the choices
+
+With the setting on, the default, and more than one choice, the request for suggestions opens with the session's slash commands, skills included, as `$.command.list()` gives them: one line each with its description, skills and the person's own commands before the built-ins, at most 80 commands and 8,000 characters. The block is the same on every call and marked for the prompt cache, so after the first answer the cache serves it. The lines after the first may then be one of those commands with a short argument, "Find a skill for ..." when the work needs something none of them covers, or "Search the web for ..." when the answer guesses at something that changes over time. The first line keeps the rules of [ADR-0004](adr/0004-tuned-suggestion-prompt.md).
+
+A command choice is kept only when the session lists the command. Commands that end the session, sign out or throw the conversation away (`/clear`, `/exit`, `/logout`, `/rewind`, `/resume` and a few more) are never offered, whatever the model writes. Clicking a command choice runs it as typing it would; set to put choices in the box, it goes there instead. Finding a skill and searching the web are Claude's work, done with its own tools on the person's account: the plugin makes no network requests. With the setting off, the request is the one without commands.
 
 ## The model and effort for each task
 
@@ -63,6 +70,7 @@ When a turn ran on something other than the session's own model and effort, the 
 | Setting | Options | Default |
 |---|---|---|
 | Suggest next messages | On, off | On |
+| Offer skills and web searches | On, off | On |
 | Model | Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 | Sonnet 5.5 |
 | Thinking effort | Low, medium, high | Low |
 | Number of choices | 1 to 5 | 3 |

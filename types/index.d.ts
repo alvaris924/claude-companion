@@ -5,11 +5,12 @@ export type LastPrompt = { text: string; at: number; isFromProgram: boolean }
 export type Suggestion = { choices: string[]; at: number }
 
 /**
- * The settings as the settings pane saves them in the plugin's store: each picker's value. `route` fits each task's
- * model and effort, `light` and `heavy` say how.
+ * The settings as the settings pane saves them in the plugin's store: each picker's value. `skills` lets the choices
+ * after the first run a skill or command; `route` fits each task's model and effort, `light` and `heavy` say how.
  */
 export type StoredSettings = {
   suggest: boolean
+  skills: boolean
   model: string
   effort: string
   choices: string

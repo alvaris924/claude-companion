@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
-import type { ModelUsage, On, RenderSurface, TurnStepInput } from 'claude-code'
+import type { CommandInfo, ModelTextBlock, ModelUsage, On, RenderSurface, TurnStepInput } from 'claude-code'
 
 import { gradeTask, nextLevel } from '../hooks/register'
 
@@ -27,6 +27,14 @@ const NOTHING_DRAWS: readonly RenderSurface[] = []
 const SONNET_HIGH = { model: 'claude-sonnet-5-5', effort: 'high' } as const
 const HAIKU_LOW = { model: 'claude-haiku-5-5', effort: 'low' } as const
 const QUESTION = 'what does the config loader do?'
+// The commands a session lists, as `$.command.list()` answers: a plugin's skill, this mod's own, built-ins, the person's.
+const COMMANDS: readonly CommandInfo[] = [
+  { name: 'clear', description: 'Clear the conversation and start over', source: 'builtin' },
+  { name: 'compact', description: 'Summarize the conversation so far to free context', source: 'builtin' },
+  { name: 'code-review', description: 'Review the current diff for correctness bugs', source: 'plugin', plugin: 'review-kit' },
+  { name: 'companion', description: 'Open the companion settings', source: 'plugin', plugin: 'companion' },
+  { name: 'standup', description: 'Draft a standup note from the recent commits', source: 'user' },
+]
 
 /** How the engine beneath the plugins behaves in one test. */
 type Setup = {
@@ -42,6 +50,8 @@ type Setup = {
   stored?: Readonly<Record<string, unknown>>
   /** The context window's fill in tokens, as `$.session.usage()` reports it; absent before the first reading. */
   contextTokens?: number
+  /** The slash commands the session lists. */
+  commands?: readonly CommandInfo[]
   /** A model whose requests fail before they answer: with an error, or with no response at all. */
   refused?: { model: string; how: 'throws' | 'no-response' }
 }
@@ -49,9 +59,18 @@ type Setup = {
 /** What the engine did beneath the plugins, as the tests read it back. */
 type World = {
   clock: MockClock
-  requests: { model: string; effort: string | undefined; maxTokens: number | undefined; prompt: string }[]
+  requests: {
+    model: string
+    effort: string | undefined
+    maxTokens: number | undefined
+    prompt: string
+    blocks: readonly ModelTextBlock[] | undefined
+  }[]
   /** The model and effort each request of a turn went with, as the engine beneath the plugins received it. */
   steps: { model: string; effort: TurnStepInput['effort'] }[]
+  /** The commands run through `$.command.run`, and how often the command list was read. */
+  commandsRun: { command: string; args: string }[]
+  listed: number
   box: string
   opened: string[]
   submitted: string[]
@@ -68,12 +87,14 @@ type World = {
  * opening (placed wherever a surface attaches), and a Windows host whose processes all succeed.
  */
 function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): World {
-  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused } = setup
+  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, commands = [], refused } = setup
   mock.store(on, stored === undefined ? {} : { settings: stored })
   const world: World = {
     clock: mock.clock(on, { now: 1_000 }),
     requests: [],
     steps: [],
+    commandsRun: [],
+    listed: 0,
     box: '',
     opened: [],
     submitted: [],
@@ -93,7 +114,7 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('model.complete', async (_, e) => {
-    world.requests.push({ model: e.model, effort: e.effort, maxTokens: e.maxTokens, prompt: e.prompt })
+    world.requests.push({ model: e.model, effort: e.effort, maxTokens: e.maxTokens, prompt: e.prompt, blocks: e.promptBlocks })
     if (lateMs > 0) await world.clock.sleep(lateMs)
     if (declinedBy.includes(e.model)) return { value: { isAnswered: false as const, reason: 'empty-reply' as const, usage: NO_USAGE } }
     return { value: { isAnswered: true as const, text: answer, usage: NO_USAGE } }
@@ -125,6 +146,14 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     return { value: surfaces.length > 0 ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'no surface draws it' } }
   })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: contextTokens, window: 1_000_000 }, rateLimits: [] } }))
+  on('command.list', () => {
+    world.listed += 1
+    return { value: [...commands] }
+  })
+  on('command.run', (_, e) => {
+    world.commandsRun.push({ command: e.command, args: e.args })
+    return { text: '' }
+  })
   on('turn.step', async function* (_, e) {
     world.steps.push({ model: e.model, effort: e.effort })
     if (refused?.model === e.model && refused.how === 'throws') throw new Error('this model is not available here')
@@ -965,7 +994,7 @@ describe('task routing', () => {
 
     const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
     expect(ran.text).toContain(
-      'Clicking a choice: Sends it as my message · Fit to the task: on (light tasks: My model and effort; heavy tasks: My model, one effort level up)',
+      'Skills and searches: on · Fit to the task: on (light tasks: My model and effort; heavy tasks: My model, one effort level up)',
     )
   })
 
@@ -1013,5 +1042,118 @@ describe('task routing', () => {
     expect(nextLevel('now refactor the parser', 'light', [])).toEqual({ level: 'heavy', isNew: true })
     expect(nextLevel('ok and now also update the readme and the changelog too', 'heavy', [])).toEqual({ level: 'heavy', isNew: false })
     expect(nextLevel('add a test for the parser and run the whole suite again', 'light', [])).toEqual({ level: 'standard', isNew: true })
+  })
+})
+
+describe('skills and searches among the choices', () => {
+  test("the request opens with the session's commands in one cached block, the person's and plugins' first", async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, commands: COMMANDS })
+
+    await typed($, 'merge the parser work')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    const [opening, rest] = world.requests[0]?.blocks ?? []
+    expect(opening?.cache).toBe(true)
+    expect(opening?.text).toBe(
+      '<commands>\nThe slash commands the developer can run in this session:\n' +
+        '/code-review: Review the current diff for correctness bugs\n' +
+        '/standup: Draft a standup note from the recent commits\n' +
+        '/compact: Summarize the conversation so far to free context\n</commands>\n\n',
+    )
+    expect(rest?.cache).toBeUndefined()
+    expect(world.requests[0]?.prompt).toContain('one of the commands in <commands>')
+    expect(world.requests[0]?.prompt).toContain('"Search the web for ..."')
+  })
+
+  test('a command choice stays when the session has it; an unknown one and one that ends the session go', async ($, on) => {
+    const answer = ['Open the parser PR into dev', '/code-review high', '/deploy now', '/clear', 'Search the web for the current parser API']
+    const world = engine(on, ['vscode'], { showsSuggestions: false, commands: COMMANDS, answer: answer.join('\n') })
+
+    await typed($, 'merge the parser work')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    expect(await choicesDrawn(band)).toEqual(['Open the parser PR into dev', '/code-review high', 'Search the web for the current parser API'])
+    await band.unmount()
+  })
+
+  test('pressing a command choice runs the command, and its turn keeps the session model and effort', async ($, on) => {
+    const answer = ['Open the parser PR into dev', '/code-review high', 'Show me the diff first'].join('\n')
+    const world = engine(on, ['vscode'], { showsSuggestions: false, commands: COMMANDS, answer, stored: { route: true } })
+
+    await typed($, 'merge the parser work')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    await band.press({ key: 'choice-2' })
+    expect(world.commandsRun).toEqual([{ command: 'code-review', args: 'high' }])
+    expect(world.submitted).toEqual(['merge the parser work'])
+    await band.redraw()
+    expect((await band.find({ key: 'prompt' }))?.text).toBe('/code-review high')
+    await band.unmount()
+
+    await runTurn($, 't2', '/code-review high', SONNET_HIGH)
+    expect(world.steps).toEqual([SONNET_HIGH])
+  })
+
+  test('with skills and searches off, the request carries no commands and no rule for them', async ($, on) => {
+    const answer = ['Open the parser PR into dev', '/clear', 'Show me the diff first'].join('\n')
+    const world = engine(on, ['vscode'], { showsSuggestions: false, commands: COMMANDS, answer, stored: { skills: false } })
+
+    await typed($, 'merge the parser work')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    expect(world.listed).toBe(0)
+    expect(world.requests[0]?.blocks).toBeUndefined()
+    expect(world.requests[0]?.prompt).not.toContain('<commands>')
+    expect(world.requests[0]?.prompt).not.toContain('Search the web')
+    const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    expect(await choicesDrawn(band)).toEqual(['Open the parser PR into dev', 'Show me the diff first']) // never /clear
+    await band.unmount()
+  })
+
+  test('one choice is the likeliest message alone, asked with no commands', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, commands: COMMANDS, stored: { choices: '1' } })
+
+    await typed($, 'merge the parser work')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    expect(world.listed).toBe(0)
+    expect(world.requests[0]?.blocks).toBeUndefined()
+    expect(world.requests[0]?.prompt).not.toContain('Find a skill')
+  })
+
+  test('with no commands in the session, the choices may still ask for a skill or a web search', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false })
+
+    await typed($, 'merge the parser work')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    expect(world.listed).toBe(1)
+    expect(world.requests[0]?.blocks).toBeUndefined()
+    expect(world.requests[0]?.prompt).toContain('"Find a skill for ..."')
+    expect(world.requests[0]?.prompt).not.toContain('<commands>')
+  })
+
+  test('the settings pane shows the skills switch and saves it for the next answer', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, commands: COMMANDS })
+
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    expect((await pane.find({ key: 'skills' }))?.props.value).toBe('on')
+    await pane.select({ key: 'skills', value: 'off' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'skills' }))?.props.value).toBe('off')
+    await pane.unmount()
+
+    await typed($, 'merge the parser work')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    expect(world.listed).toBe(0)
   })
 })
