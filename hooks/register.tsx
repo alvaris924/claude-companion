@@ -9,7 +9,7 @@ import type {
   TurnStepResult,
 } from 'claude-code'
 
-import type { LastPrompt, RoutedTurn, StoredSettings, Suggestion } from '../types'
+import type { LastPrompt, OwnRequest, RoutedTurn, StoredSettings, Suggestion } from '../types'
 
 // The companion: the person's one Claude Code mod, the home of every small helper around the prompt.
 //
@@ -123,6 +123,10 @@ const SOFT_LEAD = /^(?:(?:ok(?:ay)?|so|and|also|now|hey|please|pls|can you|could
 const QUESTION_LEAD = /^(?:what|what's|whats|how|where|which|when|who|whose|explain|summari[sz]e|describe|define|list|remind me|tell me|show me)\b/i
 // A yes-or-no question leads with one of these and ends with "?": "does it handle tabs?" ("do the release" is work).
 const YES_NO_LEAD = /^(?:is|are|was|were|does|do|did|has|have|should|would|could|can|will)\b/i
+// A proposal, or a change being weighed ("how about ...", "what if ...", "should we ..."): no light task, whatever
+// question it leads with.
+const PROPOSAL =
+  /^(?:how (?:about|bout)|what (?:about|if))\b|\b(?:should|shall) (?:we|i|it|there|this|that|they|the|have|be)\b|\bwould it be (?:better|worth)\b/i
 // Signs of something broken: a question about it asks for debugging, which is no light task.
 const DEBUG_SIGNS =
   /\b(?:errors?|exceptions?|traceback|stack ?trace|fail(?:s|ed|ing|ure)?|broken|bugs?|crash(?:es|ed|ing)?|regression|flaky|wrong|(?:not|doesn'?t|does not|won'?t|can'?t) work(?:ing)?)\b/i
@@ -135,6 +139,15 @@ const HEAVY_MIN_PATHS = 4
 // A reply this short continues the running task, and so does a follow-up of up to this many words to heavy work.
 const REPLY_MAX_WORDS = 6
 const HEAVY_FOLLOW_UP_MAX_WORDS = 40
+// What a reply may lead with before it says what it wants: a yes, an "ok", a "please", a "let's".
+const REPLY_LEAD =
+  /^(?:(?:yes|yep|yeah|yup|sure|ok(?:ay)?|alright|all right|great|cool|nice|perfect|good|fine|done|so|and|also|now|then|hey|please|pls|just|can you|could you|would you|will you|can we|could we|let'?s)\b[\s,.!:;]*)+/i
+// Past that, an order leads with a verb that changes or runs something, or with a go-ahead: after a light question it
+// is work of its own, not part of the question.
+const ORDER_LEAD =
+  /^(?:(?:add|fix|change|make|update|remove|delete|drop|rename|move|create|write|edit|build|run|test|try|check|commit|push|merge|squash|open|close|apply|revert|undo|deploy|ship|release|install|uninstall|set|turn|enable|disable|replace|bump|restore|keep|use|pr|proceed|continue|start|finish)\b|do (?:it|that|this|both|all|them|so)\b|go(?: ahead\b| for\b|[.!]*$))/i
+// A yes takes up what the answer offered, which is work too, unless it comes with a question of its own.
+const YES = /^(?:yes|yep|yeah|yup|sure)\b/i
 
 /** The settings the pane changes; stored as their pickers' values (`choices` as text, the switches as booleans). */
 type Settings = {
@@ -184,6 +197,7 @@ const suggested = atom({ plugin: 'companion', key: 'next' } as const, null)
 const paneClosed = atom({ plugin: 'companion', key: 'paneClosed' } as const, false)
 const savedSettings = atom({ plugin: 'companion', key: 'settings' } as const, null)
 const routed = atom({ plugin: 'companion', key: 'routed' } as const, null)
+const own = atom({ plugin: 'companion', key: 'own' } as const, null)
 
 // Prompts the machine sends on its own. Every other origin (the composer, the bridge, the SDK host,
 // an unclassified channel such as an editor extension) is the person typing.
@@ -236,6 +250,8 @@ let pending: Pending | undefined
 const fitted = new Map<string, FittedTurn>()
 // Set once a fitted request failed before it answered: the rest of the session's turns go as the engine makes them.
 let isFitRefused = false
+// The session's own model and effort as last written to state, so a turn writes them again only when they change.
+let ownKey = ''
 
 /** `value` when it is one of `options`' values, else `fallback`. */
 export function pick(value: unknown, options: readonly SelectOption[], fallback: string): string {
@@ -454,15 +470,18 @@ export async function pressChoice($: EngineInterface, text: string, choices: rea
 /** Sends a choice as the person's own words, once however often the choices are pressed. */
 export async function sendChoice($: EngineInterface, text: string): Promise<void> {
   let isTaken = false
+  let offered: readonly string[] = []
   await update($, suggested, current => {
     isTaken = current !== null && current.choices.includes(text)
+    offered = current?.choices ?? []
     return isTaken ? null : current
   })
   if (!isTaken) return
 
   // Recorded here: the prompt hook below never sees this mod's own submit.
   await recordPrompt($, text, false)
-  pending = undefined // a choice continues the task it answers
+  // A choice continues the task it answers, unless it orders work after a light question.
+  pending = { kind: 'task', ...nextLevel(text, task?.level ?? null, offered) }
   await $.prompt.submit({ text, asUser: true })
 }
 
@@ -543,8 +562,8 @@ export function wordsIn(text: string): number {
 
 /**
  * How much a task asks of the model, from the prompt that starts it: heavy for building, reshaping or moving code and
- * for long prompts or many paths; light for a short question or a request to explain, with nothing broken in it and
- * nothing pasted; standard otherwise.
+ * for long prompts or many paths; light for a short question or a request to explain, with nothing broken in it,
+ * nothing pasted and no change proposed; standard otherwise.
  */
 export function gradeTask(text: string): TaskLevel {
   const words = wordsIn(text)
@@ -552,7 +571,8 @@ export function gradeTask(text: string): TaskLevel {
   if (HEAVY_WORK.test(text) || words > HEAVY_MIN_WORDS || paths >= HEAVY_MIN_PATHS) return 'heavy'
 
   const asked = text.trim().replace(SOFT_LEAD, '')
-  const isQuestion = QUESTION_LEAD.test(asked) || (YES_NO_LEAD.test(asked) && /\?\s*$/.test(asked))
+  const isQuestion =
+    (QUESTION_LEAD.test(asked) || (YES_NO_LEAD.test(asked) && /\?\s*$/.test(asked))) && !PROPOSAL.test(asked)
   const isPlain =
     words <= LIGHT_MAX_WORDS && paths <= 1 && text.trim().split('\n').length <= 2 && !text.includes('```') && !DEBUG_SIGNS.test(text)
   return isQuestion && isPlain ? 'light' : 'standard'
@@ -565,13 +585,23 @@ export function isReply(text: string, choices: readonly string[]): boolean {
   return wordsIn(text) <= REPLY_MAX_WORDS && !HEAVY_WORK.test(text)
 }
 
+/** Whether a reply orders work rather than asks or acknowledges: "push it", "yep, let's do it", a bare "yes". */
+export function isOrder(text: string): boolean {
+  const said = text.trim()
+  if (ORDER_LEAD.test(said.replace(REPLY_LEAD, ''))) return true
+  return YES.test(said) && !/\?\s*$/.test(said)
+}
+
 /**
  * The level of the task a prompt works on: its own grade when it starts a task, the running task's when it answers
- * the last turn or follows up heavy work. `isNew` says a task starts, so its first request decides afresh.
+ * the last turn or follows up heavy work. An order after a light question starts a task of its own, a pressed choice
+ * included, so the work does not stay on the light model. `isNew` says a task starts, so its first request decides
+ * afresh.
  */
 export function nextLevel(text: string, running: TaskLevel | null, choices: readonly string[]): { level: TaskLevel; isNew: boolean } {
   const graded = gradeTask(text)
   if (running === null) return { level: graded, isNew: true }
+  if (running === 'light' && isOrder(text)) return { level: graded === 'light' ? 'standard' : graded, isNew: true }
   if (isReply(text, choices)) return { level: running, isNew: false }
   if (running === 'heavy' && graded !== 'heavy' && wordsIn(text) <= HEAVY_FOLLOW_UP_MAX_WORDS) return { level: running, isNew: false }
   return { level: graded, isNew: true }
@@ -644,6 +674,33 @@ export function routeFor(
   const model = routes.heavy === 'model' ? steppedUp(own.model) : own.model
   const effort = raisedEffort(own.effort)
   return model === own.model && effort === own.effort ? null : { model, effort }
+}
+
+/** Keeps the session's own model and effort as a main-loop turn's first request names them, for the settings pane. */
+export async function noteOwn($: EngineInterface, e: TurnStepInput): Promise<void> {
+  const seen: OwnRequest = { model: e.model, effort: e.effort === undefined ? null : String(e.effort) }
+  const key = `${seen.model} ${String(seen.effort)}`
+  if (key === ownKey) return
+  ownKey = key
+  try {
+    await update($, own, () => seen)
+  } catch {
+    ownKey = '' // tried again at the next turn; the request itself goes on, fitted or not, either way
+  }
+}
+
+/**
+ * Why heavy tasks run as usual whatever the heavy pick says: the session's own model and effort already stand as high
+ * as the pick goes, as with max effort. Null while the pick would change them, before the first request is seen, and
+ * for "my model and effort".
+ */
+export function heavyNote(heavy: Settings['heavy'], seen: OwnRequest | null): string | null {
+  if (seen === null || heavy === 'keep') return null
+  const canRaiseEffort = seen.effort !== 'max' && EFFORT_LADDER.some(level => level === seen.effort)
+  const canStepUp = heavy === 'model' && steppedUp(seen.model) !== seen.model
+  if (canRaiseEffort || canStepUp) return null
+  const effort = seen.effort === null ? '' : ` at ${seen.effort} effort`
+  return `Heavy tasks run as usual here: this session already runs on ${modelName(seen.model)}${effort}.`
 }
 
 /** Decides a fitted turn at its first request: what its task's level gets, while the conversation is small enough. */
@@ -785,7 +842,9 @@ export const register: Register = on => {
     if (await openSettings($)) return { text: 'Companion settings opened.' }
 
     const current = await loadSettings($)
-    return { text: `${settingsLine(current)}\nNo panel draws here: run /companion in VS Code or the terminal to change them.` }
+    const note = heavyNote(current.heavy, await read($, own))
+    const lines = [settingsLine(current), note, 'No panel draws here: run /companion in VS Code or the terminal to change them.']
+    return { text: lines.filter(line => line !== null).join('\n') }
   })
 
   on('command.run', { command: 'copy-next' }, async ($, e) => {
@@ -850,6 +909,8 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('turn.step', async function* ($, e, next) {
+    // The session's own model and effort, as each main-loop turn's first request names them before any fitting.
+    if (e.agentId === undefined && e.index === 0) await noteOwn($, e)
     // A fitted turn's requests go with its task's model and effort; every other request as the engine made it.
     const fit = await routedStep($, e)
     if (fit === undefined) return yield* next(e)
@@ -1036,6 +1097,7 @@ export const register: Register = on => {
     // Drawn from $.state (a pick redraws it); a render never writes, so before the first load it reads the store.
     const drawn = await read($, savedSettings)
     const current = drawn !== null ? settingsFrom(drawn) : ((await readSettings($)) ?? settings)
+    const note = heavyNote(current.heavy, await read($, own))
     if (e.surface === 'mobile') {
       // The mobile app draws no picker: the settings as text, changed from a computer.
       const { Box, Text } = $.ui.resolve(e)
@@ -1044,6 +1106,11 @@ export const register: Register = on => {
           <Box key="summary">
             <Text>{settingsLine(current)}</Text>
           </Box>
+          {note !== null && (
+            <Box key="heavyNote">
+              <Text dimColor>{note}</Text>
+            </Box>
+          )}
           <Text dimColor>Change them from VS Code or the terminal: /companion.</Text>
         </Box>
       )
@@ -1086,6 +1153,11 @@ export const register: Register = on => {
         />
         <Select key="light" label="Light tasks" value={current.light} options={LIGHT_ROUTES} onSelect={value => changeSetting($, 'light', value)} />
         <Select key="heavy" label="Heavy tasks" value={current.heavy} options={HEAVY_ROUTES} onSelect={value => changeSetting($, 'heavy', value)} />
+        {note !== null && (
+          <Box key="heavyNote">
+            <Text dimColor>{note}</Text>
+          </Box>
+        )}
         <Text dimColor>Saved for every session; other open sessions take a change at their next turn.</Text>
       </Box>
     )

@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 import type { ModelUsage, On, RenderSurface, TurnStepInput } from 'claude-code'
 
-import { gradeTask, nextLevel } from '../hooks/register'
+import { gradeTask, isOrder, nextLevel } from '../hooks/register'
 
 const PLUGIN = 'companion'
 const PANE = 'last-prompt'
@@ -831,6 +831,37 @@ describe('task routing', () => {
     expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW, SONNET_HIGH])
   })
 
+  test('after a light question a short order runs as usual: the work does not stay on Haiku', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    await typed($, 'add that to the docs')
+    await runTurn($, 't2', 'add that to the docs', SONNET_HIGH)
+
+    expect(world.steps).toEqual([HAIKU_LOW, SONNET_HIGH])
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'task' })).toBeUndefined()
+    await band.unmount()
+  })
+
+  test('a pressed choice that asks continues a light task; one that orders work runs as usual', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    for (const [turnId, key, text] of [['t2', 'choice-2', CHOICES[1]], ['t3', 'choice-1', CHOICES[0]]] as const) {
+      await world.clock.advance(1)
+      const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
+      await band.press({ key })
+      await band.unmount()
+      await runTurn($, turnId, text, SONNET_HIGH)
+    }
+
+    expect(world.submitted).toEqual([QUESTION, CHOICES[1], CHOICES[0]])
+    expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW, SONNET_HIGH])
+  })
+
   test('a pressed choice continues the task it answers', async ($, on) => {
     const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true } })
 
@@ -960,13 +991,46 @@ describe('task routing', () => {
     expect(world.steps).toEqual([{ model: 'claude-opus-5-5', effort: 'xhigh' }])
   })
 
+  test('the settings say when the session already stands as high as the heavy pick goes', async ($, on) => {
+    engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true } })
+    const atMax = 'Heavy tasks run as usual here: this session already runs on Opus 5.5 at max effort.'
+
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    expect(await pane.find({ key: 'heavyNote' })).toBeUndefined()
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, { model: 'claude-opus-5-5', effort: 'max' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'heavyNote' }))?.text).toBe(atMax)
+    const mobile = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'mobile' })
+    expect((await mobile.find({ key: 'heavyNote' }))?.text).toBe(atMax)
+    await mobile.unmount()
+
+    // One model up still has somewhere to go from Opus; from Fable at max effort it has not.
+    await pane.select({ key: 'heavy', value: 'model' })
+    await pane.redraw()
+    expect(await pane.find({ key: 'heavyNote' })).toBeUndefined()
+    await typed($, 'and the tests?')
+    await runTurn($, 't2', 'and the tests?', { model: 'claude-fable-5-1', effort: 'max' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'heavyNote' }))?.text).toBe(
+      'Heavy tasks run as usual here: this session already runs on Fable 5.1 at max effort.',
+    )
+    await pane.unmount()
+  })
+
   test('where no panel draws, /companion says how tasks are fitted', async ($, on) => {
     engine(on, NOTHING_DRAWS, { stored: { route: true, light: 'keep' } })
+    const run = () => $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
 
-    const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    const ran = await run()
     expect(ran.text).toContain(
       'Clicking a choice: Sends it as my message · Fit to the task: on (light tasks: My model and effort; heavy tasks: My model, one effort level up)',
     )
+    expect(ran.text).not.toContain('Heavy tasks run as usual')
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, { model: 'claude-opus-5-5', effort: 'max' })
+    expect((await run()).text).toContain('Heavy tasks run as usual here: this session already runs on Opus 5.5 at max effort.')
   })
 
   test('grading: work verbs, long prompts and many paths are heavy; plain questions light; the rest standard', () => {
@@ -997,6 +1061,13 @@ describe('task routing', () => {
       'explain this:\n```\nconst a = 1\n```',
       'what do src/a.ts and src/b.ts share?',
       'fix the typo in the README',
+      // Proposals and changes being weighed, whatever question they lead with.
+      'how about if we split the band into two rows?',
+      'what if the band showed the model too?',
+      'so how many settings should we add for this?',
+      'where is the settings tab, it should have a button',
+      'should we cache the settings?',
+      'would it be better to keep one module?',
     ]
 
     expect(heavy.map(gradeTask)).toEqual(heavy.map(() => 'heavy'))
@@ -1005,13 +1076,37 @@ describe('task routing', () => {
   })
 
   test('a reply or a follow-up of heavy work continues the running task; anything else starts one', () => {
-    const typedChoice = 'Run the tests before opening the parser PR'
+    const typedChoice = 'How does the loader pick a source for each key'
+    const orderChoice = 'Run the tests before opening the parser PR'
 
     expect(nextLevel(QUESTION, null, [])).toEqual({ level: 'light', isNew: true })
     expect(nextLevel('yes, go ahead', 'heavy', [])).toEqual({ level: 'heavy', isNew: false })
-    expect(nextLevel(`${typedChoice}.`, 'light', [typedChoice])).toEqual({ level: 'light', isNew: false })
+    expect(nextLevel(`${typedChoice}?`, 'light', [typedChoice])).toEqual({ level: 'light', isNew: false })
+    expect(nextLevel(`${orderChoice}.`, 'light', [orderChoice])).toEqual({ level: 'standard', isNew: true })
+    expect(nextLevel(`${orderChoice}.`, 'heavy', [orderChoice])).toEqual({ level: 'heavy', isNew: false })
     expect(nextLevel('now refactor the parser', 'light', [])).toEqual({ level: 'heavy', isNew: true })
     expect(nextLevel('ok and now also update the readme and the changelog too', 'heavy', [])).toEqual({ level: 'heavy', isNew: false })
     expect(nextLevel('add a test for the parser and run the whole suite again', 'light', [])).toEqual({ level: 'standard', isNew: true })
+  })
+
+  test('after a light question an order starts a task of its own; a question or thanks continues it', () => {
+    const orders = [
+      'yes',
+      "yep, let's do it",
+      'go ahead',
+      'push the change',
+      'add that to the docs',
+      'ok do it',
+      'can you fix it?',
+      'done, please merge and push',
+      'squash-merge it for me',
+    ]
+    const replies = ['why?', 'ok thanks', 'and the tests?', 'yes, but why?', 'makes sense', 'do you know why?', 'go on']
+
+    expect(orders.map(isOrder)).toEqual(orders.map(() => true))
+    expect(replies.map(isOrder)).toEqual(replies.map(() => false))
+    for (const order of orders) expect(nextLevel(order, 'light', [])).toEqual({ level: 'standard', isNew: true })
+    for (const reply of replies) expect(nextLevel(reply, 'light', [])).toEqual({ level: 'light', isNew: false })
+    expect(nextLevel('push the change', 'heavy', [])).toEqual({ level: 'heavy', isNew: false })
   })
 })

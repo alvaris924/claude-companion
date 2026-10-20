@@ -32,6 +32,9 @@ export type RoutedTurn = {
   at: number
 }
 
+/** The session's own model and effort, as its main-loop requests name them. An effort is null where they name none. */
+export type OwnRequest = { model: string; effort: string | null }
+
 declare module 'claude-code' {
   interface PluginState {
     companion: {
@@ -42,6 +45,8 @@ declare module 'claude-code' {
       settings: StoredSettings | null
       /** The last turn, while it ran on another model or effort than the session's own to fit its task; else null. */
       routed: RoutedTurn | null
+      /** The session's own model and effort as its last main-loop turn began; null until the first request. */
+      own: OwnRequest | null
     }
   }
 }

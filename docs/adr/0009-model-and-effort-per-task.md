@@ -15,20 +15,21 @@ The plugin API lets a `turn.step` hook send a request of the main loop with anot
 ## Decision
 
 - Off by default, behind one switch in the settings, with two more pickers for what light and heavy tasks get.
-- Each prompt of the person's is graded by rules, with no model call. Heavy: a verb of substantial work (implement, refactor, migrate, redesign, rewrite, overhaul, scaffold), "from scratch" or the whole codebase, more than 250 words, or four paths or more. Light: a question, or a request to explain or list, of at most 25 words, with no sign of something broken, nothing pasted and at most one path. Standard: the rest.
-- The grade belongs to the task. A reply continues the running task: a choice, clicked or typed, or up to six words without a verb of work. A follow-up of up to 40 words to heavy work stays heavy. Turns nobody typed continue the running task.
+- Each prompt of the person's is graded by rules, with no model call. Heavy: a verb of substantial work (implement, refactor, migrate, redesign, rewrite, overhaul, scaffold), "from scratch" or the whole codebase, more than 250 words, or four paths or more. Light: a question, or a request to explain or list, of at most 25 words, with no sign of something broken, nothing pasted, at most one path and no change proposed ("how about", "what if", "should we"). Standard: the rest.
+- The grade belongs to the task. A reply continues the running task: a choice, clicked or typed, or up to six words without a verb of work. After a light question, though, an order starts a task of its own, so the work never stays on Haiku: a bare yes, or a reply that leads with a verb of work such as add, run or push, or with "do it" or "go ahead". A follow-up of up to 40 words to heavy work stays heavy. Turns nobody typed continue the running task.
 - A light task goes to Haiku 5.5 at low effort when the session's model is a first-party Sonnet, Opus or Fable model. A heavy task runs one effort level up, `max` at most, or, as a separate pick, one model up the ladder Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.1 as well.
 - A task changes model or effort only while the conversation is under 100,000 tokens, decided at its first request and kept for the whole task, since going back costs an uncached read too.
 - Left alone: standard tasks, subagents, slash commands and skills (a skill may set its own model), prompts a program sends where nothing is drawn, such as `claude -p`, model ids the plugin cannot read, and a request the engine sends on another model mid-turn, such as a fallback.
 - A fitted request that fails before it answers goes again as the engine made it, and fitting stops for the rest of the session with a notice, so a blocked model never breaks a turn twice.
-- The band shows what a fitted turn ran on, and a light one gets a button that asks the last prompt again on the session's own model and effort.
+- The band shows what a fitted turn ran on, and a light one gets a button that asks the last prompt again on the session's own model and effort. The settings say when the session's own model and effort already stand as high as the heavy pick goes, so that pick changes nothing.
 
 ## Consequences
 
 - With fitting on, a quick question early in a session costs about a twentieth of what it costs on Sonnet 5.5, and less still against Opus 5.5 or Fable 5.1.
 - Heavy tasks cost more: the higher effort thinks longer, its first request reads the conversation uncached, and one model up costs that model's price.
 - Past 100,000 tokens nothing changes, so long sessions keep the person's own model and effort.
-- The rules misjudge some prompts. A question that hides real work goes to Haiku, which the band shows and the redo undoes; "rewrite this sentence" counts as heavy and only costs more. The rules were written by hand and are not scored against recorded turns; a change to them should be checked against fresh recorded turns, as [ADR-0004](0004-tuned-suggestion-prompt.md) asks of the suggestion prompt.
+- The rules misjudge some prompts. A question that hides real work goes to Haiku, which the band shows and the redo undoes; "rewrite this sentence" counts as heavy and only costs more. The rules were written by hand; a change to them should be checked against fresh recorded turns, as [ADR-0004](0004-tuned-suggestion-prompt.md) asks of the suggestion prompt.
+- A first check on 2026-10-20 replayed about 400 prompts recorded in one person's sessions on a tool-heavy project. Those sessions start at about 55,000 tokens and pass 100,000 within the first turn, so almost only a session's first prompt fell under the line, and one prompt in all would have gone to Haiku. Sessions there run at max effort, where the default heavy pick changes nothing. The replay also found proposals graded light, and orders such as "push it" that the six-word reply rule kept on Haiku; the rules above now catch both.
 - The choices, the band and the suggestion model are untouched by fitting: suggestions keep their own model and effort.
 
 ## Alternatives considered

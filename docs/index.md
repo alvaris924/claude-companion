@@ -45,10 +45,10 @@ Off by default. Turned on in the settings, each prompt of the person's is graded
 | Grade | When | Its turns run on |
 |---|---|---|
 | Heavy | It asks to implement, refactor, migrate, redesign, rewrite, overhaul or scaffold, to start from scratch or to take on the whole codebase; or it runs past 250 words or names four paths or more | The session's model one effort level up, `max` at most; or, as a separate pick, one model up as well, on the ladder Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.1 |
-| Light | A question, or a request to explain or list, of at most 25 words, with nothing broken in it, nothing pasted and at most one path | Haiku 5.5 at low effort, when the session runs on a Sonnet, Opus or Fable model; or, as a separate pick, as usual |
+| Light | A question, or a request to explain or list, of at most 25 words, with nothing broken in it, nothing pasted, at most one path and no change proposed ("how about ...", "what if ...", "should we ...") | Haiku 5.5 at low effort, when the session runs on a Sonnet, Opus or Fable model; or, as a separate pick, as usual |
 | Standard | Everything else | As usual |
 
-The grade belongs to the task, not to each prompt. A reply continues the running task: a clicked choice, a typed one, or up to six words that ask for no new work. A follow-up of up to 40 words to heavy work stays heavy. Anything else starts a task of its own grade. Turns nobody typed, such as a background task's notification, continue the running task.
+The grade belongs to the task, not to each prompt. A reply continues the running task: a clicked choice, a typed one, or up to six words that ask for no new work. After a light question an order is work of its own, so it never stays on Haiku: a bare yes, or a reply, typed or clicked, that leads with a verb such as add, fix, run, push or merge, or with "do it" or "go ahead", past any "ok", "yes" or "please". A follow-up of up to 40 words to heavy work stays heavy. Anything else starts a task of its own grade. Turns nobody typed, such as a background task's notification, continue the running task.
 
 A task changes model or effort only while the conversation is under 100,000 tokens, decided at its first request and kept for the task. Caches belong to one model, so a switch makes the API read the conversation once without its cache. Below 100,000 tokens, Haiku 5.5's uncached read costs no more than a cached read on Sonnet 5.5, Opus 5.5 or Fable 5.1; above it, Haiku's price rises fivefold. A change of effort also makes the API read the conversation uncached, at the session model's price, which is why a light task switches model instead of lowering the effort ([ADR-0009](adr/0009-model-and-effort-per-task.md)).
 
@@ -71,7 +71,7 @@ When a turn ran on something other than the session's own model and effort, the 
 | Light tasks | Haiku 5.5 at low effort, my model and effort | Haiku 5.5 at low effort |
 | Heavy tasks | My model one effort level up, one model and one effort level up, my model and effort | My model, one effort level up |
 
-The model and effort of the suggestions are their own: fitting the person's turns to their tasks leaves them alone. A pick is saved at once for every session, and other open sessions take it at their next turn. The mobile app draws no pickers, so its pane lists the settings as text; where no pane can be drawn at all, `/companion` answers with the settings on one line.
+The model and effort of the suggestions are their own: fitting the person's turns to their tasks leaves them alone. When the session's own model and effort already stand as high as the heavy pick goes, as at max effort with "My model, one effort level up", a line under the pickers says that heavy tasks run as usual; the mobile pane and the line `/companion` answers with where no pane draws say it too. The session's own model and effort are those its last turn's first request named. A pick is saved at once for every session, and other open sessions take it at their next turn. The mobile app draws no pickers, so its pane lists the settings as text; where no pane can be drawn at all, `/companion` answers with the settings on one line.
 
 ## Commands
 
@@ -100,6 +100,7 @@ The model and effort of the suggestions are their own: fitting the person's turn
 | The current choices | Session state `companion.next` | Until the next prompt |
 | Whether the person closed the mobile pane | Session state `companion.paneClosed` | The session |
 | What the last turn ran on, when it was fitted to its task | Session state `companion.routed` | Until the next prompt |
+| The session's own model and effort, as its last turn's first request named them | Session state `companion.own` | The session |
 | The settings | The plugin's store, key `settings`, mirrored in session state `companion.settings` | Across sessions |
 
 Nothing is written anywhere else, and the plugin makes no network requests of its own: its one call out is the model request, made through Claude Code on the person's account.
