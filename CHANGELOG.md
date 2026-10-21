@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- The model and effort fitted to each task, off by default: turned on in `/companion`, each task is graded from the person's prompt by rules, a light question goes to Haiku 5.5 at low effort, and heavy work runs one effort level up, or one model up as well when picked, while the conversation is under 100,000 tokens. A proposal ("how about ...", "should we ...") is no light question, and an order that follows a light question, a bare yes or "push it", runs as usual. The band says what a fitted turn ran on, with a redo on the session's own model and effort for a light task, and the settings say when the session already runs as high as the heavy pick goes (#9).
+
 ## [0.9.0] - 2026-10-19
 
 ### Added
