@@ -18,6 +18,7 @@ export type StoredSettings = {
   easy: string
   mid: string
   hard: string
+  limit: string
 }
 
 /**
@@ -31,6 +32,7 @@ export type RoutedTurn = {
   effort: string | null
   ownModel: string
   ownEffort: string | null
+  isKept: boolean
   at: number
 }
 

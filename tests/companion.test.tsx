@@ -886,6 +886,44 @@ describe('task routing', () => {
     expect(world.steps).toEqual([HAIKU_LOW])
   })
 
+  test('past the limit only hard tasks switch; easy and mid ones keep the session model and the band says why', async ($, on) => {
+    const mid = 'add a test for the parser'
+    const hard = 'refactor the config loader into one module per source'
+    const world = engine(on, ['terminal'], {
+      stored: { route: true, limit: '200000' },
+      contextTokens: 450_000,
+      grades: { [QUESTION]: 'easy', [mid]: 'mid', [hard]: 'hard' },
+    })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'task' }))?.text).toBe('Easy task · Opus 5.5 at max effort · kept: long conversation')
+    expect(await band.find({ key: 'redo' })).toBeUndefined()
+    await band.unmount()
+    await typed($, mid)
+    await runTurn($, 't2', mid, OPUS_MAX)
+    await typed($, hard)
+    await runTurn($, 't3', hard, SONNET_HIGH)
+
+    expect(world.steps).toEqual([OPUS_MAX, OPUS_MAX, OPUS_MAX])
+  })
+
+  test('under the limit every grade switches, and the setting is saved from the pane', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true }, contextTokens: 150_000, grades: { [QUESTION]: 'easy' } })
+
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    expect((await pane.find({ key: 'limit' }))?.props.value).toBe('none')
+    await pane.select({ key: 'limit', value: '200000' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'limit' }))?.props.value).toBe('200000')
+    await pane.unmount()
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    expect(world.steps).toEqual([HAIKU_LOW])
+  })
+
   test('a session with a 1M context window keeps it on the model it switches to', async ($, on) => {
     const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
 
@@ -1138,7 +1176,7 @@ describe('task routing', () => {
     const ran = await run()
     expect(ran.text).toContain(
       'Clicking a choice: Sends it as my message · Fit to the task: on (easy tasks: My model and effort; ' +
-        'mid tasks: Sonnet 5.5 at medium effort; hard tasks: Opus 5.5 at max effort)',
+        'mid tasks: Sonnet 5.5 at medium effort; hard tasks: Opus 5.5 at max effort; switching at any length)',
     )
     expect(ran.text).not.toContain('in this session')
 
