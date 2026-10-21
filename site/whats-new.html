@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>What’s New in Companion</title>
+<meta name="description" content="What changed in Companion, the Claude Code plugin: a calmer band, the right model for each task, grouped settings and the first public release.">
+<link rel="canonical" href="https://claudecompanion.vercel.app/whats-new">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0b0c0f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Companion for Claude Code">
+<meta property="og:title" content="What’s New in Companion">
+<meta property="og:description" content="What changed in Companion, the Claude Code plugin: a calmer band, the right model for each task, grouped settings and the first public release.">
+<meta property="og:url" content="https://claudecompanion.vercel.app/whats-new">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each entry is its text, then a demo drawn like the editor panel it lives in. Dark first. */
+:root {
+  color-scheme: dark;
+  --bg: #0c0d10;
+  --surface: #14161b;
+  --panel: #1a1c22;
+  --raise: #23262e;
+  --line: #2d313b;
+  --fg: #eceef2;
+  --muted: #959cab;
+  --accent: #82a8ff;
+  --quote: #4a5060;
+  --term: #0f1013;
+  --hover: #2b2f38;
+  --font-text: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f7f8fa; --surface: #eceef3; --panel: #ffffff; --raise: #f6f7f9; --line: #d8dce4;
+    --fg: #16181d; --muted: #5b6270; --accent: #2456d4; --quote: #c2c8d3; --term: #ffffff; --hover: #e8ebf1;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f7f8fa; --surface: #eceef3; --panel: #ffffff; --raise: #f6f7f9; --line: #d8dce4;
+  --fg: #16181d; --muted: #5b6270; --accent: #2456d4; --quote: #c2c8d3; --term: #ffffff; --hover: #e8ebf1;
+  color-scheme: light;
+}
+
+body { background: var(--bg); color: var(--fg); font-family: var(--font-text); font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--raise); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+
+.wrap { max-width: 720px; margin-inline: auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 88px; }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 44px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; color: var(--fg); letter-spacing: -0.01em; }
+.brand .mark { color: var(--accent); font-size: 18px; }
+.top a.out { font-size: 15px; }
+
+h1 { font-size: clamp(38px, 7vw, 54px); line-height: 1.05; letter-spacing: -0.035em; font-weight: 650; margin: 0 0 14px; text-wrap: balance; }
+.intro { color: var(--muted); max-width: 58ch; margin: 0 0 26px; }
+
+.jump { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 56px; padding: 0; list-style: none; }
+.jump a { display: inline-block; font-size: 14px; color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; background: var(--surface); }
+.jump a:hover { text-decoration: none; border-color: var(--muted); }
+
+.day { display: grid; gap: 56px; margin-bottom: 72px; }
+.date { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; letter-spacing: 0.01em; color: var(--muted); margin: 0; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.tag { font-size: 12px; font-weight: 500; color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; background: var(--surface); }
+
+article { display: grid; gap: 14px; scroll-margin-top: 24px; }
+article h3 { font-size: 23px; line-height: 1.25; letter-spacing: -0.02em; font-weight: 600; margin: 0; text-wrap: balance; }
+article p { margin: 0; max-width: 64ch; }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 6px; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 28px 1fr; gap: 4px; }
+.steps li::before { content: counter(step); font-family: var(--font-mono); font-size: 13px; color: var(--muted); padding-top: 3px; }
+.steps li > span { min-width: 0; }
+.note { color: var(--muted); font-size: 15px; }
+.ui { font-weight: 550; }
+
+/* A demo: the surface it appears on, then the companion's own drawing inside it. */
+figure { margin: 6px 0 0; }
+.demo { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: grid; gap: 12px; overflow: hidden; }
+figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; }
+.band { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; display: grid; gap: 8px; font-size: 15px; }
+.band-label { font-size: 12px; color: var(--muted); }
+.row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.quote { flex: 1; min-width: 0; border-left: 3px solid var(--quote); padding-left: 10px; overflow-wrap: anywhere; }
+.more { flex: none; width: 30px; height: 24px; display: grid; place-items: center; background: var(--raise); border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 14px; }
+.eyebrow { font-size: 12px; font-weight: 600; color: var(--muted); }
+.choices { display: grid; gap: 6px; justify-items: start; }
+.choice { background: var(--raise); border: 1px solid var(--line); border-radius: 5px; padding: 3px 10px; font-size: 14px; color: var(--fg); max-width: 100%; overflow-wrap: anywhere; }
+.routed { font-size: 13px; color: var(--muted); }
+.routed .link { color: var(--accent); }
+
+.group-h { font-size: 12px; font-weight: 600; color: var(--muted); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.card .r { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 8px 12px; font-size: 14px; }
+.card .r + .r { border-top: 1px solid var(--line); }
+.card .v { color: var(--muted); text-align: right; min-width: 0; }
+.card .v::after { content: " ▾"; font-size: 11px; }
+.foot { font-size: 12px; color: var(--muted); }
+.stack { display: grid; gap: 6px; }
+
+.term { background: var(--term); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; overflow-x: auto; }
+.term .dim { color: var(--muted); }
+.term .acc { color: var(--accent); }
+.term .line { white-space: pre; }
+
+.picker { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 14px; }
+.picker .h { display: flex; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.picker .h .v { color: var(--muted); }
+.picker .o { display: flex; justify-content: space-between; gap: 12px; padding: 7px 12px; }
+.picker .o .d { color: var(--muted); }
+.picker .o.on { background: var(--raise); }
+.picker .o.on .d::after { content: "  ✓"; color: var(--accent); }
+
+.code { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 10px 10px 14px; }
+.code pre { margin: 0; flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-text); font-size: 15px; line-height: 1.55; }
+.copy { flex: none; font: inherit; font-size: 13px; color: var(--fg); background: var(--raise); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+.copy:hover { border-color: var(--muted); }
+
+footer { border-top: 1px solid var(--line); padding-top: 22px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--muted); }
+footer nav { display: flex; flex-wrap: wrap; gap: 16px; }
+
+/* Motion: each demo plays its interaction on a loop while in view; at rest it shows the finished state. */
+.cursor { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; opacity: 0; transition: transform .75s cubic-bezier(.22,.8,.24,1), opacity .25s ease; }
+.cursor.on { opacity: 1; }
+.cursor svg { display: block; overflow: visible; }
+.cursor path { fill: var(--fg); stroke: var(--bg); stroke-width: 1.2px; stroke-linejoin: round; }
+.choice, .card .r, .picker .o, .keycap { transition: background-color .18s ease, border-color .18s ease, transform .12s ease, color .18s ease; }
+.choice.is-hover { background: var(--hover); border-color: var(--muted); }
+.card .r.is-hover, .picker .o.is-hover { background: var(--hover); }
+.is-press { transform: scale(.97); }
+.link.is-hover { text-decoration: underline; }
+.fade { transition: opacity .17s ease; }
+.fade.out { opacity: 0; }
+.routed { transition: opacity .25s ease; }
+.routed.out { opacity: 0; }
+.caret { display: inline-block; width: 1.5px; height: 1.05em; margin-left: 1px; vertical-align: -0.18em; background: var(--accent); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.keycap { display: inline-block; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 6px; vertical-align: 1px; }
+.keycap.is-press { color: var(--fg); background: var(--hover); transform: translateY(1px); }
+.term .taken { color: var(--fg); }
+
+@media (max-width: 480px) {
+  body { font-size: 16px; }
+  .demo { padding: 12px; }
+  .card .r { flex-direction: column; gap: 0; }
+  .card .v { text-align: left; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } .caret { animation: none; } }
+html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/"><span class="mark" aria-hidden="true">↳</span>Companion</a>
+    <a class="out" href="https://github.com/alvaris924/claude-companion">View on GitHub</a>
+  </header>
+
+  <h1>What’s new</h1>
+  <p class="intro">Companion is a Claude Code plugin that keeps your last prompt in view and suggests what you might send next. Here is what changed lately, and how to use each part.</p>
+
+  <ul class="jump" aria-label="Jump to an entry">
+    <li><a href="#calmer-band">A calmer band</a></li>
+    <li><a href="#model-per-task">The right model per task</a></li>
+    <li><a href="#settings-groups">Settings in two groups</a></li>
+    <li><a href="#install">Install by asking Claude</a></li>
+    <li><a href="#suggestions">Suggestions you can click</a></li>
+    <li><a href="#sonnet-default">Sonnet 5.5 by default</a></li>
+    <li><a href="#last-prompt">Your last prompt in view</a></li>
+  </ul>
+
+  <section class="day" aria-labelledby="d-21">
+    <h2 class="date" id="d-21">21 October 2026 <span class="tag">Next release</span></h2>
+
+    <article id="calmer-band">
+      <h3>A calmer band above the prompt</h3>
+      <p>The band reads like part of Claude Code now. Your last prompt sits as a quote, the suggestions are quiet buttons marked ↳, and a ⋯ at the end opens the settings. Every color comes from your theme, so it looks right in dark and in light.</p>
+      <ol class="steps">
+        <li><span>Send any prompt.</span></li>
+        <li><span>When the answer ends, the suggestions appear under <span class="ui">Suggested</span>.</span></li>
+        <li><span>Click one to send it, or set a click to put it in the prompt box first.</span></li>
+      </ol>
+      <p class="note">The terminal keeps its compact row of buttons.</p>
+      <figure>
+        <div class="demo" data-demo="calm" role="img" aria-label="The band in VS Code: the last prompt as a quote, a more button, and three suggestions marked with an arrow">
+          <div class="band">
+            <div class="band-label">Companion</div>
+            <div class="row"><div class="quote">add a pause menu to the game</div><div class="more">⋯</div></div>
+            <div class="eyebrow">Suggested</div>
+            <div class="choices">
+              <div class="choice">↳ Show me the diff first</div>
+              <div class="choice">↳ Run the tests before committing</div>
+              <div class="choice">↳ Commit it on a new branch</div>
+            </div>
+          </div>
+        </div>
+        <figcaption>VS Code, dark theme</figcaption>
+      </figure>
+    </article>
+
+    <article id="model-per-task">
+      <h3>The right model for each task</h3>
+      <p>Turn this on and Companion sizes up each prompt by rules, with no model call of its own. A quick question goes to Haiku 5.5 at low effort. A refactor or a migration thinks one level harder, or moves up a model if you pick that.</p>
+      <ol class="steps">
+        <li><span>Run <code>/companion</code>.</span></li>
+        <li><span>Set <span class="ui">Fit model and effort to each task</span> to <span class="ui">On</span>.</span></li>
+        <li><span>Ask a short question. The band says which model answered, and <span class="ui">Ask again on Opus 5.5</span> brings back your usual model.</span></li>
+      </ol>
+      <p class="note">Replies stay with their task, and an order after a quick question, like “yes” or “push it”, goes back to your own model. It only switches while the conversation is under 100,000 tokens, where a switch costs less than it saves.</p>
+      <figure>
+        <div class="demo" data-demo="route" role="img" aria-label="The band after a quick question: a line saying it ran on Haiku 5.5 at low effort, with a link to ask again on Opus 5.5">
+          <div class="band">
+            <div class="band-label">Companion</div>
+            <div class="row"><div class="quote">what does the config loader do?</div><div class="more">⋯</div></div>
+            <div class="routed">Light task · Haiku 5.5 at low effort · <span class="link">Ask again on Opus 5.5</span></div>
+            <div class="eyebrow">Suggested</div>
+            <div class="choices">
+              <div class="choice">↳ Where is the loader called from?</div>
+              <div class="choice">↳ Add a test for the loader</div>
+            </div>
+          </div>
+        </div>
+        <figcaption>A quick question, answered by Haiku 5.5</figcaption>
+      </figure>
+    </article>
+
+    <article id="settings-groups">
+      <h3>Settings in two clear groups</h3>
+      <p>The settings pane groups its pickers by what they change, with a short note under each group. When your session already runs at max effort, it tells you heavy tasks have no higher level to go to.</p>
+      <ol class="steps">
+        <li><span>Run <code>/companion</code>, or click ⋯ at the end of the band.</span></li>
+        <li><span>Pick a value. It’s saved for every session.</span></li>
+        <li><span>Open sessions use it from their next turn.</span></li>
+      </ol>
+      <figure>
+        <div class="demo" data-demo="settings" role="img" aria-label="The settings pane with two groups of pickers, each with a note under it">
+          <div class="stack">
+            <div class="group-h">Suggested next messages</div>
+            <div class="card">
+              <div class="r"><span>Suggest next messages</span><span class="v">On</span></div>
+              <div class="r"><span>Model</span><span class="v">Sonnet 5.5</span></div>
+              <div class="r"><span>Thinking effort</span><span class="v">Low</span></div>
+              <div class="r"><span>Number of choices</span><span class="v">3</span></div>
+              <div class="r"><span>Clicking a choice</span><span class="v">Sends it as my message</span></div>
+            </div>
+            <div class="foot">Written after each answer by the model above, as part of your plan’s usage.</div>
+          </div>
+          <div class="stack">
+            <div class="group-h">Model and effort for each task</div>
+            <div class="card">
+              <div class="r"><span>Fit model and effort to each task</span><span class="v">On</span></div>
+              <div class="r"><span>Light tasks</span><span class="v">Haiku 5.5 at low effort</span></div>
+              <div class="r" data-heavy><span>Heavy tasks</span><span class="v">My model, one effort level up</span></div>
+            </div>
+            <div class="foot" data-note>Heavy tasks run as usual here: this session already runs on Opus 5.5 at max effort.</div>
+          </div>
+        </div>
+        <figcaption>The settings pane, opened with /companion</figcaption>
+      </figure>
+    </article>
+  </section>
+
+  <section class="day" aria-labelledby="d-19">
+    <h2 class="date" id="d-19">19 October 2026 <span class="tag">v0.9.0 · First public release</span></h2>
+
+    <article id="install">
+      <h3>Install it by asking Claude</h3>
+      <p>Companion is public. Claude can clone it, check the code and install it for you, in the terminal, VS Code or the desktop app.</p>
+      <ol class="steps">
+        <li><span>Paste the prompt below into Claude Code.</span></li>
+        <li><span>Read what Claude found in the code before it installs.</span></li>
+        <li><span>Start a new session to load the plugin.</span></li>
+      </ol>
+      <div class="code">
+        <pre id="install-cmd" data-text="Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.">Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.</pre>
+        <button class="copy" id="copy-install" type="button">Copy</button>
+      </div>
+      <p class="note">Keep the clone: <code>git pull</code> there updates it. Companion needs Claude Code 2.1.300 or newer.</p>
+    </article>
+
+    <article id="suggestions">
+      <h3>Suggestions you can click</h3>
+      <p>After each answer, a model reads your last prompt and the end of the answer, then offers the messages you’re most likely to send next. You get three by default, or anywhere from one to five.</p>
+      <ol class="steps">
+        <li><span>Send a prompt and wait for the answer.</span></li>
+        <li><span>Click a suggestion to send it as your own message.</span></li>
+        <li><span>In the terminal, press Tab to take the likeliest one, or run <code>/copy-next 2</code> to copy the second.</span></li>
+      </ol>
+      <figure>
+        <div class="demo" data-demo="term" role="img" aria-label="The terminal: three suggestions as buttons after Next, and the likeliest shown dim in the prompt box">
+          <div class="term">
+            <div class="line"><span class="dim">│</span> <span data-last>merge the parser work</span></div>
+            <div class="line"><span class="dim">Next:</span> <span data-next><span class="acc">[ Open the parser PR ]</span> [ Show me the diff ] [ Run the tests first ]</span></div>
+            <div class="line"><span class="acc">&gt;</span> <span class="dim" data-sugg>Open the parser PR</span>  <span class="keycap" data-key>Tab</span></div>
+          </div>
+        </div>
+        <figcaption>The terminal, with the likeliest suggestion waiting in the prompt box</figcaption>
+      </figure>
+    </article>
+
+    <article id="sonnet-default">
+      <h3>Sonnet 5.5 writes the suggestions</h3>
+      <p>New installs ask Sonnet 5.5 for suggestions, so the most expensive model isn’t spent on every answer. Fable 5.1, Opus 5.5 and Haiku 5.5 are one pick away, and a model you already chose is kept.</p>
+      <ol class="steps">
+        <li><span>Run <code>/companion</code>.</span></li>
+        <li><span>Under <span class="ui">Suggested next messages</span>, choose a <span class="ui">Model</span> and a <span class="ui">Thinking effort</span>.</span></li>
+      </ol>
+      <figure>
+        <div class="demo" data-demo="picker" role="img" aria-label="The model picker, open, with Sonnet 5.5 selected">
+          <div class="picker">
+            <div class="h"><span>Model</span><span class="v">Sonnet 5.5 ▴</span></div>
+            <div class="o"><span>Fable 5.1</span><span class="d">best picks, most of your plan</span></div>
+            <div class="o"><span>Opus 5.5</span><span class="d"></span></div>
+            <div class="o on"><span>Sonnet 5.5</span><span class="d">the default</span></div>
+            <div class="o"><span>Haiku 5.5</span><span class="d">fastest, least of your plan</span></div>
+          </div>
+        </div>
+        <figcaption>The model picker in the settings pane</figcaption>
+      </figure>
+    </article>
+
+    <article id="last-prompt">
+      <h3>Your last prompt stays in view</h3>
+      <p>A band right above the prompt box shows what you last asked while the answer scrolls by. Text a host wraps around your words is left out, and a pasted image shows as <code>[image]</code>.</p>
+      <ol class="steps">
+        <li><span>Send a prompt. It stays above the box until you send the next one.</span></li>
+        <li><span>On the mobile app it opens as a pane. Run <code>/last-prompt</code> to bring it back after you close it.</span></li>
+      </ol>
+      <figure>
+        <div class="demo" data-demo="last" role="img" aria-label="The band showing the last prompt, with a pasted image shown as the word image in brackets">
+          <div class="band">
+            <div class="band-label">Companion</div>
+            <div class="row"><div class="quote">fix the empty header for new accounts [image]</div><div class="more">⋯</div></div>
+          </div>
+        </div>
+        <figcaption>While the answer scrolls by</figcaption>
+      </figure>
+    </article>
+  </section>
+
+  <footer>
+    <span>Companion is a Claude Code plugin, MIT licensed.</span>
+    <nav aria-label="More about Companion">
+      <a href="https://github.com/alvaris924/claude-companion">Source</a>
+      <a href="https://github.com/alvaris924/claude-companion/blob/main/CHANGELOG.md">Full changelog</a>
+      <a href="https://github.com/alvaris924/claude-companion/blob/main/docs/index.md">Documentation</a>
+    </nav>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var button = document.getElementById('copy-install');
+  var source = document.getElementById('install-cmd');
+  if (!button || !source) return;
+  function selectText() {
+    var range = document.createRange();
+    range.selectNodeContents(source);
+    var selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  function flash(label) {
+    button.textContent = label;
+    setTimeout(function () { button.textContent = 'Copy'; }, 1600);
+  }
+  button.addEventListener('click', function () {
+    var text = source.getAttribute('data-text') || source.textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { flash('Copied'); }, function () { selectText(); flash('Selected'); });
+    } else {
+      selectText();
+      flash('Selected');
+    }
+  });
+})();
+
+// The demos play their interaction on a loop while in view. Every scene ends where it began: the finished state the
+// page shows at rest, so a thumbnail, a reduced-motion viewer and a paused demo all see the whole picture.
+(function () {
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce || !('IntersectionObserver' in window)) return;
+  var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+  async function swap(el, text) { el.classList.add('fade', 'out'); await wait(170); el.textContent = text; el.classList.remove('out'); await wait(170); }
+  async function swapHTML(el, html) { el.classList.add('fade', 'out'); await wait(170); el.innerHTML = html; el.classList.remove('out'); await wait(170); }
+  async function press(el) { el.classList.add('is-press'); await wait(140); el.classList.remove('is-press'); }
+  async function type(el, text, ms) {
+    var typed = document.createTextNode('');
+    var caret = document.createElement('span');
+    caret.className = 'caret';
+    el.textContent = '';
+    el.appendChild(typed);
+    el.appendChild(caret);
+    for (var i = 1; i <= text.length; i++) { typed.data = text.slice(0, i); await wait(ms); }
+    await wait(350);
+    caret.remove();
+  }
+
+  function play(demo, scene) {
+    var visible = false, wake = null, cursor = null;
+    new IntersectionObserver(function (entries) {
+      visible = entries[0].isIntersecting;
+      if (visible && wake) { var w = wake; wake = null; w(); }
+    }, { threshold: 0.45 }).observe(demo);
+    function untilVisible() { return visible ? Promise.resolve() : new Promise(function (r) { wake = r; }); }
+    function corner() { var d = demo.getBoundingClientRect(); return 'translate(' + (d.width - 26) + 'px,' + (d.height - 26) + 'px)'; }
+    function ensureCursor() {
+      if (cursor) return cursor;
+      cursor = document.createElement('div');
+      cursor.className = 'cursor';
+      cursor.setAttribute('aria-hidden', 'true');
+      cursor.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2.5 1.5l10.5 7.2-4.4.9 2.6 5-2 1-2.6-5-3.1 3.1z"/></svg>';
+      demo.appendChild(cursor);
+      cursor.style.transform = corner();
+      return cursor;
+    }
+    var c = {
+      $: function (s) { return demo.querySelector(s); },
+      $$: function (s) { return Array.prototype.slice.call(demo.querySelectorAll(s)); },
+      wait: wait,
+      point: function (el, fx, fy) {
+        var k = ensureCursor(), d = demo.getBoundingClientRect(), r = el.getBoundingClientRect();
+        var x = r.left - d.left + r.width * (fx == null ? 0.3 : fx), y = r.top - d.top + r.height * (fy == null ? 0.6 : fy);
+        k.classList.add('on');
+        k.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+        return wait(800);
+      },
+      park: function () { var k = ensureCursor(); k.style.transform = corner(); k.classList.remove('on'); }
+    };
+    (async function () {
+      for (;;) {
+        await untilVisible();
+        await wait(1100);
+        try { await scene(c); } catch (e) { return; }
+      }
+    })();
+  }
+
+  var scenes = {
+    calm: async function (c) {
+      var quote = c.$('.quote'), list = c.$('.choices'), choices = c.$$('.choice');
+      var before = choices.map(function (el) { return el.textContent; }), prompt = quote.textContent;
+      var after = ['↳ Commit it on a new branch', '↳ Explain the larger hunks', '↳ Open a pull request'];
+      await c.point(choices[0]);
+      choices[0].classList.add('is-hover');
+      await c.wait(450);
+      await press(choices[0]);
+      await swap(quote, 'Show me the diff first');
+      choices[0].classList.remove('is-hover');
+      c.park();
+      list.classList.add('fade', 'out');
+      await c.wait(900);
+      choices.forEach(function (el, i) { el.textContent = after[i]; });
+      list.classList.remove('out');
+      await c.wait(2800);
+      list.classList.add('out');
+      await swap(quote, prompt);
+      choices.forEach(function (el, i) { el.textContent = before[i]; });
+      list.classList.remove('out');
+      await c.wait(2400);
+    },
+    route: async function (c) {
+      var quote = c.$('.quote'), routed = c.$('.routed'), link = c.$('.routed .link'), list = c.$('.choices');
+      var prompt = quote.textContent;
+      routed.classList.add('out');
+      list.classList.add('fade', 'out');
+      await c.wait(300);
+      await type(quote, prompt, 38);
+      await c.wait(500);
+      routed.classList.remove('out');
+      await c.wait(900);
+      list.classList.remove('out');
+      await c.wait(700);
+      await c.point(link, 0.4, 0.6);
+      link.classList.add('is-hover');
+      await c.wait(1300);
+      link.classList.remove('is-hover');
+      c.park();
+      await c.wait(2800);
+    },
+    settings: async function (c) {
+      var row = c.$('[data-heavy]'), value = row.querySelector('.v'), note = c.$('[data-note]');
+      var pick = value.textContent;
+      await c.point(row, 0.78, 0.55);
+      row.classList.add('is-hover');
+      await c.wait(500);
+      await press(row);
+      await swap(value, 'One model and one effort level up');
+      note.classList.add('fade', 'out');
+      await c.wait(2600);
+      await press(row);
+      await swap(value, pick);
+      note.classList.remove('out');
+      row.classList.remove('is-hover');
+      c.park();
+      await c.wait(2800);
+    },
+    term: async function (c) {
+      var last = c.$('[data-last]'), next = c.$('[data-next]'), sugg = c.$('[data-sugg]'), key = c.$('[data-key]');
+      var lastText = last.textContent, nextHTML = next.innerHTML, suggText = sugg.textContent;
+      await press(key);
+      sugg.classList.remove('dim');
+      sugg.classList.add('taken');
+      await c.wait(800);
+      key.textContent = 'Enter';
+      await c.wait(450);
+      await press(key);
+      await c.wait(200);
+      await swap(last, suggText);
+      sugg.textContent = '';
+      sugg.classList.remove('taken');
+      sugg.classList.add('dim');
+      key.textContent = 'Tab';
+      await swapHTML(next, '<span class="acc">[ Review the PR ]</span> [ Merge it ] [ Check the CI run ]');
+      await c.wait(600);
+      await swap(sugg, 'Review the PR');
+      await c.wait(2600);
+      await swap(last, lastText);
+      await swapHTML(next, nextHTML);
+      await swap(sugg, suggText);
+      await c.wait(2000);
+    },
+    picker: async function (c) {
+      var rows = c.$$('.picker .o');
+      for (var i = 0; i < 3; i++) { rows[i].classList.add('is-hover'); await c.wait(520); rows[i].classList.remove('is-hover'); }
+      rows[2].classList.add('is-hover');
+      await press(rows[2]);
+      await c.wait(900);
+      rows[2].classList.remove('is-hover');
+      await c.wait(2800);
+    },
+    last: async function (c) {
+      var quote = c.$('.quote');
+      var prompts = [quote.textContent, 'why does the build fail on Windows?', 'rename the config loader please'];
+      for (var i = 1; i <= prompts.length; i++) { await c.wait(2300); await swap(quote, prompts[i % prompts.length]); }
+    }
+  };
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-demo]'), function (demo) {
+    var scene = scenes[demo.getAttribute('data-demo')];
+    if (scene) play(demo, scene);
+  });
+
+  // The install command types itself out once, the first time it comes into view.
+  var cmd = document.getElementById('install-cmd');
+  if (cmd) {
+    var full = cmd.getAttribute('data-text') || cmd.textContent;
+    new IntersectionObserver(function (entries, observer) {
+      if (!entries[0].isIntersecting) return;
+      observer.disconnect();
+      setTimeout(function () { type(cmd, full, 22); }, 500);
+    }, { threshold: 0.6 }).observe(cmd);
+  }
+})();
+</script>
+</body>
+</html>

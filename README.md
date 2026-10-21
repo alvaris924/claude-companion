@@ -1,6 +1,6 @@
 # Companion
 
-A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click.
+A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click. See it in motion at [claudecompanion.vercel.app](https://claudecompanion.vercel.app).
 
 > **Status: v0.9.0, the first public release.** What comes next is in the [milestones](https://github.com/alvaris924/claude-companion/milestones).
 
@@ -19,23 +19,21 @@ Claude Code 2.1.300 or newer.
 
 ## Install
 
-At the prompt of a Claude Code terminal session:
+Paste this into Claude Code, in the terminal, VS Code or the desktop app:
 
 ```
-/plugin install companion --marketplace alvaris924/claude-companion
+Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.
 ```
 
-Answer `y` to add the marketplace, then choose a scope: the user scope loads it in every session. It is active at once, with no restart.
-
-From a shell:
+Claude reads the code and tells you what it found, then installs the plugin from the clone:
 
 ```
-claude plugin install companion --marketplace alvaris924/claude-companion
+claude plugin install companion --marketplace ~/claude-companion
 ```
 
-In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `alvaris924/claude-companion`, then Add plugin.
+Start a new session to load it. Keep the clone, since the plugin is read from it: `git pull` there updates it. Where `claude` is not on the PATH, as when only the VS Code extension is installed, the extension's own binary does the same: `~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude`.
 
-Update with `claude plugin update companion`.
+To install from GitHub yourself instead, run `/plugin install companion --marketplace alvaris924/claude-companion` in a Claude Code terminal session (answer `y`, then choose the user scope), or `claude plugin install companion --marketplace alvaris924/claude-companion` from a shell. Update that install with `claude plugin update companion`.
 
 ## Cost and privacy
 
