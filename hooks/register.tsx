@@ -140,14 +140,16 @@ const GRADE_REPLY_CHARS = 1500
 const GRADE_SYSTEM =
   "You grade how much thinking a developer's request to Claude Code, their AI coding assistant, needs, so that it " +
   'runs on a model that fits. Answer with one word: easy, mid or hard.\n' +
-  'easy: a quick question, a lookup, a status check, a short explanation, or a tiny edit such as a rename, a typo or ' +
-  'one obvious line.\n' +
-  'mid: everyday coding work: a bug with a clear cause, a small feature, a change across a few files, tests for ' +
-  'existing code, a doc page, a focused review.\n' +
+  'easy: only a question, a lookup, a status check or a short explanation, with nothing to change or run.\n' +
+  'mid: everyday work, and any request to change or run something: edit files, tweak a value, run commands, commit, ' +
+  'merge, deploy, check the state of a repository or machine, a bug with a clear cause, a small feature, a change ' +
+  'across a few files, tests for existing code, a doc page, a focused review.\n' +
   'hard: work that needs planning or deep reasoning: a feature across many files, a refactor or a migration, a bug ' +
   'with an unclear cause, performance, concurrency or security work, an architecture or design decision.\n' +
   'A reply that takes up what Claude offered ("yes", "do it", "go with B") is as hard as the work it takes up. ' +
-  'Between two grades, pick the harder one.'
+  'Lean hard: a wrong easy or mid grade gets a weaker model and a worse result, while a wrong hard grade only costs ' +
+  'more. If the request could reasonably need hard-level reasoning, or you are unsure between mid and hard, answer ' +
+  'hard; if you are unsure between easy and mid, answer mid.'
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 // A first-party id of a current Claude model: what a task may move from. A session on an id the plugin cannot read (a
 // provider's own spelling, a family it does not know) keeps its model and effort, and no grading is asked.

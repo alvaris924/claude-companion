@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Changed
+
+- The grader leans hard and treats action requests as mid: easy is only a question, a lookup, a status check or a short explanation with nothing to change or run, anything that edits, runs, commits, merges or deploys is at least mid, and a request that could need hard-level reasoning is graded hard. Checked on 120 prompts typed in real sessions, easy grades that took 10 or more tool calls fell from 4 to 1 or 0 (#21).
+
 ## [0.10.0] - 2026-10-21
 
 ### Changed
