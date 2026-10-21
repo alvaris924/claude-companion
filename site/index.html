@@ -85,6 +85,9 @@ h1 .soft { color: var(--muted); }
 .cmd { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 7px 7px 7px 14px; }
 .cmd pre { margin: 0; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; font-family: var(--font-mono); font-size: 14px; color: var(--fg); }
 .cmd .prompt { color: var(--muted); }
+.ask { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px 14px; width: min(100%, 640px); background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 12px 12px 16px; }
+.ask-label { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--muted); }
+.ask-text { margin: 0; font-size: 15px; line-height: 1.55; color: var(--fg); overflow-wrap: anywhere; }
 .copy { flex: none; font: inherit; font-size: 13px; font-weight: 500; color: var(--bg); background: var(--fg); border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
 .copy:hover { opacity: 0.9; }
 .ghost { font-size: 16px; font-weight: 500; color: var(--fg); padding: 8px 4px; }
@@ -230,8 +233,9 @@ footer a:hover { color: var(--fg); }
     <h1 id="headline">See what you asked.<br><span class="soft">Click what’s next.</span></h1>
     <p class="lede">Companion is a Claude Code plugin that keeps your last prompt in view while the answer scrolls, then suggests what you’re likeliest to send next. One click sends it.</p>
     <div class="cta">
-      <div class="cmd">
-        <pre id="cmd-hero" data-text="/plugin install companion --marketplace alvaris924/claude-companion"><span class="prompt">&gt; </span>/plugin install companion --marketplace alvaris924/claude-companion</pre>
+      <div class="ask">
+        <span class="ask-label">Paste into Claude Code to install</span>
+        <p class="ask-text" id="cmd-hero" data-text="Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.">Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.</p>
         <button class="copy" type="button" data-copy="cmd-hero">Copy</button>
       </div>
       <a class="ghost" href="https://github.com/alvaris924/claude-companion">View the source →</a>
@@ -386,22 +390,23 @@ footer a:hover { color: var(--fg); }
 
   <section class="block" id="install" aria-labelledby="install-h">
     <p class="kicker">Install</p>
-    <h2 id="install-h">One line, no restart</h2>
+    <h2 id="install-h">Ask Claude to install it</h2>
     <div class="install">
-      <p class="section-lede" style="margin:0">At the prompt of a Claude Code terminal session, run this, answer <code>y</code> to add the marketplace, and choose the user scope to load it in every session.</p>
-      <div class="cmd">
-        <pre id="cmd-install" data-text="/plugin install companion --marketplace alvaris924/claude-companion"><span class="prompt">&gt; </span>/plugin install companion --marketplace alvaris924/claude-companion</pre>
+      <p class="section-lede" style="margin:0">Paste this into Claude Code, in the terminal, VS Code or the desktop app. Claude clones the repository, reads the code and tells you what it found, then installs the plugin from that clone. Start a new session to load it.</p>
+      <div class="ask">
+        <span class="ask-label">Paste into Claude Code</span>
+        <p class="ask-text" id="cmd-install" data-text="Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.">Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.</p>
         <button class="copy" type="button" data-copy="cmd-install">Copy</button>
       </div>
       <div class="alt">
         <article>
-          <h3>From a shell</h3>
-          <div class="small-cmd">claude plugin install companion --marketplace alvaris924/claude-companion</div>
-          <p>Update later with <code>claude plugin update companion</code>.</p>
+          <h3>Updating</h3>
+          <p>Keep the clone, since the plugin is read from it. Run <code>git pull</code> there, and your next session uses the new code.</p>
         </article>
         <article>
-          <h3>In the desktop app</h3>
-          <p>Click + next to the prompt box, then Plugins. Add the marketplace <code>alvaris924/claude-companion</code>, then add the plugin.</p>
+          <h3>Or install it yourself</h3>
+          <div class="small-cmd">claude plugin install companion --marketplace alvaris924/claude-companion</div>
+          <p>From a shell. In a terminal session, <code>/plugin install</code> takes the same arguments.</p>
         </article>
       </div>
     </div>

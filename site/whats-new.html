@@ -123,7 +123,7 @@ figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; }
 .picker .o.on .d::after { content: "  ✓"; color: var(--accent); }
 
 .code { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 10px 10px 14px; }
-.code pre { margin: 0; flex: 1; min-width: 0; overflow-x: auto; font-family: var(--font-mono); font-size: 14px; }
+.code pre { margin: 0; flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-text); font-size: 15px; line-height: 1.55; }
 .copy { flex: none; font: inherit; font-size: 13px; color: var(--fg); background: var(--raise); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
 .copy:hover { border-color: var(--muted); }
 
@@ -174,7 +174,7 @@ html { scroll-behavior: smooth; }
     <li><a href="#calmer-band">A calmer band</a></li>
     <li><a href="#model-per-task">The right model per task</a></li>
     <li><a href="#settings-groups">Settings in two groups</a></li>
-    <li><a href="#install">Install with one command</a></li>
+    <li><a href="#install">Install by asking Claude</a></li>
     <li><a href="#suggestions">Suggestions you can click</a></li>
     <li><a href="#sonnet-default">Sonnet 5.5 by default</a></li>
     <li><a href="#last-prompt">Your last prompt in view</a></li>
@@ -275,18 +275,18 @@ html { scroll-behavior: smooth; }
     <h2 class="date" id="d-19">19 October 2026 <span class="tag">v0.9.0 · First public release</span></h2>
 
     <article id="install">
-      <h3>Install it with one command</h3>
-      <p>Companion is public, and it installs from its own marketplace. It’s active right away, with no restart.</p>
+      <h3>Install it by asking Claude</h3>
+      <p>Companion is public. Claude can clone it, check the code and install it for you, in the terminal, VS Code or the desktop app.</p>
       <ol class="steps">
-        <li><span>In a Claude Code terminal session, run the command below.</span></li>
-        <li><span>Answer <code>y</code> to add the marketplace.</span></li>
-        <li><span>Choose the user scope to load it in every session.</span></li>
+        <li><span>Paste the prompt below into Claude Code.</span></li>
+        <li><span>Read what Claude found in the code before it installs.</span></li>
+        <li><span>Start a new session to load the plugin.</span></li>
       </ol>
       <div class="code">
-        <pre id="install-cmd" data-text="/plugin install companion --marketplace alvaris924/claude-companion">/plugin install companion --marketplace alvaris924/claude-companion</pre>
+        <pre id="install-cmd" data-text="Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.">Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.</pre>
         <button class="copy" id="copy-install" type="button">Copy</button>
       </div>
-      <p class="note">Update later with <code>claude plugin update companion</code>. It needs Claude Code 2.1.300 or newer.</p>
+      <p class="note">Keep the clone: <code>git pull</code> there updates it. Companion needs Claude Code 2.1.300 or newer.</p>
     </article>
 
     <article id="suggestions">
