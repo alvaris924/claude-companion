@@ -1,6 +1,6 @@
 {
   "name": "companion",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Your Claude Code companion: shows your most recent prompt above the chat box and suggested next messages under it as choices you click, with a settings panel (/companion or the gear), /last-prompt and /copy-next",
   "author": { "name": "Alvaris", "url": "https://github.com/alvaris924" },
   "homepage": "https://github.com/alvaris924/claude-companion#readme",
