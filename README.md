@@ -53,7 +53,8 @@ The plugin is a hooks module, [`hooks/register.tsx`](hooks/register.tsx), on Cla
 | Version | Scope |
 |---|---|
 | v0.9.0 | First public release: the plugin as it runs today, install from this repository, CI that validates and tests it |
-| v1.0.0 | The model and effort fitted to each task; commands, settings and the state contract held stable, checked on every surface, screenshots in this README |
+| v0.10.0 | A quieter look, easy, mid and hard tasks graded by a model, a limit on switching in long conversations, a website |
+| v1.0.0 | Commands, settings and the state contract held stable, checked on every surface, screenshots in this README |
 
 ## Contributing
 
