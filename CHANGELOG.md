@@ -6,8 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-21
+
 ### Changed
 
+- The settings keys `light` and `heavy` give way to `easy`, `mid` and `hard`, each naming a model and effort. Fitting is off by default, so nothing a person has chosen is lost, and a stored value outside the new options takes its default (#16).
 - A quieter look, after Apple's developer pages: the last prompt as a quote with a ⋯ for the settings, and the choices as quiet buttons with a ↳, the surface's secondary button rather than its filled one, under a small "Suggested" label (the terminal keeps its row of buttons). A type scale and theme colours, so a dark theme and a light one each draw it their own way, and the settings in rounded cards with a note under each group.
 
 ### Added
@@ -28,5 +31,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 - Suggestions are written by Sonnet 5.5 by default, in place of Fable 5.1, so a new install does not spend the most expensive model on every answer. Fable 5.1, Opus 5.5 and Haiku 5.5 stay one pick away in `/companion`, and a model already picked there is kept.
 
-[Unreleased]: https://github.com/alvaris924/claude-companion/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/alvaris924/claude-companion/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/alvaris924/claude-companion/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/alvaris924/claude-companion/releases/tag/v0.9.0
