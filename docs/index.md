@@ -24,12 +24,13 @@ Companion is a Claude Code plugin that keeps the person's last prompt in view an
 - [ADR-0006: Settings live in the plugin store](adr/0006-settings-in-the-plugin-store.md)
 - [ADR-0007: Sonnet 5.5 is the default model](adr/0007-sonnet-default.md)
 - [ADR-0008: GitHub flow with tags, no development branch](adr/0008-branching-model.md)
-- [ADR-0009: Fit the model and effort to each task, by rules, under 100,000 tokens](adr/0009-model-and-effort-per-task.md)
+- [ADR-0009: Fit the model and effort to each task, by rules, under 100,000 tokens](adr/0009-model-and-effort-per-task.md) (superseded by ADR-0011)
 - [ADR-0010: A quiet look: theme keys, the type scale, and quiet buttons for the choices](adr/0010-a-quiet-look.md)
+- [ADR-0011: Easy, mid and hard tasks, graded by a model, at any length](adr/0011-easy-mid-hard-graded-by-a-model.md)
 
 ## The band
 
-The band directly above the prompt box shows the last prompt as a quote, a dim ⋯ at its end that opens the settings and, once an answer is in, a small "Suggested" label over the choices. When the last turn ran on something other than the session's own model and effort, a quiet line under the last prompt says what, with a link that asks again for a light task. VS Code, the desktop app and the mobile app draw each choice as a quiet button, a ↳ before the choice: the surface's secondary button, dark in VS Code like the ⋯, rather than its filled one. They lay text out in their own fonts, where the columns they report undercount the room, so there the texts are handed over whole and wrap, a choice wrapping inside its button. The terminal draws the choices as a row of buttons after `Next:`, the likeliest in the accent colour, and cuts the prompt and each choice to its measured width. The band steps aside while Claude Code shows a survey in the same place.
+The band directly above the prompt box shows the last prompt as a quote, a dim ⋯ at its end that opens the settings and, once an answer is in, a small "Suggested" label over the choices. While task fitting is on, a quiet line under the last prompt says the task's grade and what the turn ran on, with a link that asks again as usual when that was something other than the session's own model and effort. VS Code, the desktop app and the mobile app draw each choice as a quiet button, a ↳ before the choice: the surface's secondary button, dark in VS Code like the ⋯, rather than its filled one. They lay text out in their own fonts, where the columns they report undercount the room, so there the texts are handed over whole and wrap, a choice wrapping inside its button. The terminal draws the choices as a row of buttons after `Next:`, the likeliest in the accent colour, and cuts the prompt and each choice to its measured width. The band steps aside while Claude Code shows a survey in the same place.
 
 ## The look
 
@@ -45,21 +46,23 @@ Clicking a choice sends it as the person's message or, when the settings say so,
 
 ## The model and effort for each task
 
-Off by default. Turned on in the settings, each prompt of the person's is graded by rules, with no model call:
+Off by default. Turned on in the settings, each new task of the person's is graded easy, mid or hard by a model, and its turns run on what that grade's picker names:
 
-| Grade | When | Its turns run on |
+| Grade | What the grader counts as one | Runs on by default |
 |---|---|---|
-| Heavy | It asks to implement, refactor, migrate, redesign, rewrite, overhaul or scaffold, to start from scratch or to take on the whole codebase; or it runs past 250 words or names four paths or more | The session's model one effort level up, `max` at most; or, as a separate pick, one model up as well, on the ladder Haiku 5.5, Sonnet 5.5, Opus 5.5, Fable 5.1 |
-| Light | A question, or a request to explain or list, of at most 25 words, with nothing broken in it, nothing pasted, at most one path and no change proposed ("how about ...", "what if ...", "should we ...") | Haiku 5.5 at low effort, when the session runs on a Sonnet, Opus or Fable model; or, as a separate pick, as usual |
-| Standard | Everything else | As usual |
+| Easy | A quick question, a lookup, a status check, a short explanation, or a tiny edit such as a rename, a typo or one obvious line | Haiku 5.5 at low effort |
+| Mid | Everyday coding work: a bug with a clear cause, a small feature, a change across a few files, tests for existing code, a doc page, a focused review | Sonnet 5.5 at medium effort |
+| Hard | Work that needs planning or deep reasoning: a feature across many files, a refactor or a migration, a bug with an unclear cause, performance, concurrency or security work, an architecture or design decision | Opus 5.5 at max effort |
 
-The grade belongs to the task, not to each prompt. A reply continues the running task: a clicked choice, a typed one, or up to six words that ask for no new work. After a light question an order is work of its own, so it never stays on Haiku: a bare yes, or a reply, typed or clicked, that leads with a verb such as add, fix, run, push or merge, or with "do it" or "go ahead", past any "ok", "yes" or "please". A follow-up of up to 40 words to heavy work stays heavy. Anything else starts a task of its own grade. Turns nobody typed, such as a background task's notification, continue the running task.
+The grader is Sonnet 5.5 at low effort, asked once per task at the task's first request, so a new task's answer starts a second or two later. It reads the new request, cut to 1,500 characters, the request before it, cut to 500, and the end of the last answer, cut to 1,500, so a "yes, do it" is graded as the work it takes up; between two grades it picks the harder one. When it gives no grade within eight seconds, or no answer at all, rules grade the task: hard when it asks to implement, refactor, migrate, redesign, rewrite, overhaul or scaffold, to start from scratch or to take on the whole codebase, or runs past 250 words or names four paths or more; easy when it is a question, or a request to explain or list, of at most 25 words, with nothing broken in it, nothing pasted, at most one path and no change proposed ("how about ...", "what if ...", "should we ..."); mid otherwise.
 
-A task changes model or effort only while the conversation is under 100,000 tokens, decided at its first request and kept for the task. Caches belong to one model, so a switch makes the API read the conversation once without its cache. Below 100,000 tokens, Haiku 5.5's uncached read costs no more than a cached read on Sonnet 5.5, Opus 5.5 or Fable 5.1; above it, Haiku's price rises fivefold. A change of effort also makes the API read the conversation uncached, at the session model's price, which is why a light task switches model instead of lowering the effort ([ADR-0009](adr/0009-model-and-effort-per-task.md)).
+The grade belongs to the task, not to each prompt, and replies are not graded. A reply continues the running task: a clicked choice, a typed one, or up to three words that ask for no new work ("why?", "go on", "and the tests?"). After an easy question an order is work of its own, so it never stays on the easy model: a bare yes, or a reply, typed or clicked, that leads with a verb such as add, fix, run, push or merge, or with "do it" or "go ahead", past any "ok", "yes" or "please". Anything else starts a task, which is graded, a follow-up to hard work included: the grader reads the request before it and the end of the answer, so a follow-up that is hard work stays hard. Turns nobody typed, such as a background task's notification, continue the running task.
 
-Left as they are: standard tasks, subagents, slash commands and skills, prompts a program sends where nothing is drawn (`claude -p`, the Agent SDK), models the plugin cannot read, such as a provider's own spelling of an id, and a request the engine sends on another model in the middle of a turn, such as a fallback. A fitted request that fails before it answers, as when an organization blocks the model, goes again as the engine made it; fitting then stops for the rest of the session, and a notice says so.
+A task switches at any length of conversation. Caches belong to one model, and a change of effort makes the API read the conversation uncached too, so each switch reads the conversation once without its cache, at the new model's price; in a long conversation that read can cost more than the turn it saves ([ADR-0011](adr/0011-easy-mid-hard-graded-by-a-model.md)). A session on a model with a 1M context window ("[1m]") switches to the same window of the other model.
 
-When a turn ran on something other than the session's own model and effort, the band says what under the last prompt ("Light task · Haiku 5.5 at low effort") until the next prompt. For a light task, once the turn has ended, a link beside it ("Ask again on Opus 5.5") asks the last prompt again on the session's own model and effort, and that task's follow-ups stay there. Where no surface attaches, the same words lead the line beneath the answer.
+Left as they are: subagents, slash commands and skills, prompts a program sends where nothing is drawn (`claude -p`, the Agent SDK), models the plugin cannot read, such as a provider's own spelling of an id (no grading is asked there), and a request the engine sends on another model in the middle of a turn, such as a fallback. A fitted request that fails before it answers, as when an organization blocks the model, goes again as the engine made it; fitting then stops for the rest of the session, and a notice says so.
+
+Every fitted turn shows its grade and what it runs on under the last prompt ("Mid task · Sonnet 5.5 at medium effort") until the next prompt. When that is something other than the session's own model and effort, once the turn has ended, a link beside it ("Ask again on Opus 5.5") asks the last prompt again on the session's own model and effort, and that task's follow-ups stay there. Where no surface attaches, the same words lead the line beneath the answer.
 
 ## Settings
 
@@ -73,10 +76,11 @@ When a turn ran on something other than the session's own model and effort, the 
 | Number of choices | 1 to 5 | 3 |
 | Clicking a choice | Sends it as my message, puts it in the box to edit | Sends it |
 | Fit model and effort to each task | On, off | Off |
-| Light tasks | Haiku 5.5 at low effort, my model and effort | Haiku 5.5 at low effort |
-| Heavy tasks | My model one effort level up, one model and one effort level up, my model and effort | My model, one effort level up |
+| Easy tasks | Haiku 5.5 at low or medium effort; Sonnet 5.5 at low, medium or high; Opus 5.5 at medium, high or max; Fable 5.1 at high or max; my model and effort | Haiku 5.5 at low effort |
+| Mid tasks | The same | Sonnet 5.5 at medium effort |
+| Hard tasks | The same | Opus 5.5 at max effort |
 
-The model and effort of the suggestions are their own: fitting the person's turns to their tasks leaves them alone. When the session's own model and effort already stand as high as the heavy pick goes, as at max effort with "My model, one effort level up", a line under the pickers says that heavy tasks run as usual; the mobile pane and the line `/companion` answers with where no pane draws say it too. The session's own model and effort are those its last turn's first request named. A pick is saved at once for every session, and other open sessions take it at their next turn. The mobile app draws no pickers, so its pane lists the settings as text; where no pane can be drawn at all, `/companion` answers with the settings on one line.
+The model and effort of the suggestions and of the grading are their own: fitting the person's turns to their tasks leaves them alone. While a grade's picker says "My model and effort", a line under the pickers says what that is in the session ("“My model and effort” is Opus 5.5 at max effort in this session."); the mobile pane and the line `/companion` answers with where no pane draws say it too. The session's own model and effort are those its last turn's first request named. A pick is saved at once for every session, and other open sessions take it at their next turn. The mobile app draws no pickers, so its pane lists the settings as text; where no pane can be drawn at all, `/companion` answers with the settings on one line.
 
 ## Commands
 
@@ -108,7 +112,7 @@ The model and effort of the suggestions are their own: fitting the person's turn
 | The session's own model and effort, as its last turn's first request named them | Session state `companion.own` | The session |
 | The settings | The plugin's store, key `settings`, mirrored in session state `companion.settings` | Across sessions |
 
-Nothing is written anywhere else, and the plugin makes no network requests of its own: its one call out is the model request, made through Claude Code on the person's account.
+Nothing is written anywhere else, and the plugin makes no network requests of its own: its calls out are model requests, the suggestions and, while task fitting is on, the grading, made through Claude Code on the person's account.
 
 ## Working on the plugin
 
@@ -125,6 +129,7 @@ The contribution workflow is in [CONTRIBUTING.md](../CONTRIBUTING.md); rules for
 
 - **No band in VS Code.** The extension draws plugin UI from 2.1.300; older builds show the choices as a line beneath the answer.
 - **No suggestions at all.** Check that suggestions are on in `/companion`, and that the session is not a headless run. `claude --debug` logs a line for every hook that failed.
-- **A light task needed more than Haiku.** Press "Ask again on …" beside the task in the band, which asks again on your own model and effort. If it happens often, set Light tasks to "My model and effort" in `/companion`, or turn fitting off.
-- **A notice says a task could not be sent to a model.** That model is not available to the session, for instance because an organization blocks it. Fitting is off for the rest of that session; pick Light and Heavy tasks that avoid that model.
+- **Fitting seems to do nothing.** Check that it is on in `/companion`: the band then shows each task's grade under the last prompt. A grade whose pick is "My model and effort", or names what the session already runs on, runs as usual.
+- **A task got a grade too low for it.** Press "Ask again on …" beside the task in the band, which asks again on your own model and effort. If it happens often, raise that grade's pick in `/companion`, set it to "My model and effort", or turn fitting off.
+- **A notice says a task could not be sent to a model.** That model is not available to the session, for instance because an organization blocks it. Fitting is off for the rest of that session; pick models for the grades that avoid it.
 - **A tool Claude Code serves on `127.0.0.1` never appears**, such as the plugin-authoring skill's secret scan. Some antivirus web filters rewrite the responses of local HTTP servers. Seen with Norton's web protection on Windows: responses to requests that look like MCP traffic came back marked as chunked without being chunked, so every `tools/list` failed with `InvalidHTTPResponse` in the debug log. An exception for `127.0.0.1` in the antivirus's web protection fixed it.

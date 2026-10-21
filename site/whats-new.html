@@ -172,7 +172,7 @@ html { scroll-behavior: smooth; }
 
   <ul class="jump" aria-label="Jump to an entry">
     <li><a href="#calmer-band">A calmer band</a></li>
-    <li><a href="#model-per-task">The right model per task</a></li>
+    <li><a href="#model-per-task">Easy, mid and hard tasks</a></li>
     <li><a href="#settings-groups">Settings in two groups</a></li>
     <li><a href="#install">Install by asking Claude</a></li>
     <li><a href="#suggestions">Suggestions you can click</a></li>
@@ -210,20 +210,20 @@ html { scroll-behavior: smooth; }
     </article>
 
     <article id="model-per-task">
-      <h3>The right model for each task</h3>
-      <p>Turn this on and Companion sizes up each prompt by rules, with no model call of its own. A quick question goes to Haiku 5.5 at low effort. A refactor or a migration thinks one level harder, or moves up a model if you pick that.</p>
+      <h3>Easy, mid and hard tasks, each on its own model</h3>
+      <p>Turn this on and Sonnet 5.5 grades each new task easy, mid or hard. An easy one runs on Haiku 5.5 at low effort, a mid one on Sonnet 5.5 at medium and a hard one on Opus 5.5 at max, and you pick what each grade runs on.</p>
       <ol class="steps">
         <li><span>Run <code>/companion</code>.</span></li>
         <li><span>Set <span class="ui">Fit model and effort to each task</span> to <span class="ui">On</span>.</span></li>
-        <li><span>Ask a short question. The band says which model answered, and <span class="ui">Ask again on Opus 5.5</span> brings back your usual model.</span></li>
+        <li><span>Send a task. The band shows its grade and the model it runs on, and <span class="ui">Ask again on Opus 5.5</span> brings back your usual model.</span></li>
       </ol>
-      <p class="note">Replies stay with their task, and an order after a quick question, like “yes” or “push it”, goes back to your own model. It only switches while the conversation is under 100,000 tokens, where a switch costs less than it saves.</p>
+      <p class="note">Replies stay with their task without a new grading, and an order after an easy question, like “yes” or “push it”, is graded as work of its own. It switches at any length of conversation; in a long one, a switch reads the conversation once without its cache.</p>
       <figure>
-        <div class="demo" data-demo="route" role="img" aria-label="The band after a quick question: a line saying it ran on Haiku 5.5 at low effort, with a link to ask again on Opus 5.5">
+        <div class="demo" data-demo="route" role="img" aria-label="The band shows each task's grade and model: an easy question on Haiku 5.5, a mid task on Sonnet 5.5, a hard one on Opus 5.5">
           <div class="band">
             <div class="band-label">Companion</div>
             <div class="row"><div class="quote">what does the config loader do?</div><div class="more">⋯</div></div>
-            <div class="routed">Light task · Haiku 5.5 at low effort · <span class="link">Ask again on Opus 5.5</span></div>
+            <div class="routed">Easy task · Haiku 5.5 at low effort · <span class="link">Ask again on Opus 5.5</span></div>
             <div class="eyebrow">Suggested</div>
             <div class="choices">
               <div class="choice">↳ Where is the loader called from?</div>
@@ -231,13 +231,13 @@ html { scroll-behavior: smooth; }
             </div>
           </div>
         </div>
-        <figcaption>A quick question, answered by Haiku 5.5</figcaption>
+        <figcaption>Each task’s grade, and the model it runs on</figcaption>
       </figure>
     </article>
 
     <article id="settings-groups">
       <h3>Settings in two clear groups</h3>
-      <p>The settings pane groups its pickers by what they change, with a short note under each group. When your session already runs at max effort, it tells you heavy tasks have no higher level to go to.</p>
+      <p>The settings pane groups its pickers by what they change, with a short note under each group, and each grade gets its own picker for the model and effort its tasks run on.</p>
       <ol class="steps">
         <li><span>Run <code>/companion</code>, or click ⋯ at the end of the band.</span></li>
         <li><span>Pick a value. It’s saved for every session.</span></li>
@@ -260,10 +260,11 @@ html { scroll-behavior: smooth; }
             <div class="group-h">Model and effort for each task</div>
             <div class="card">
               <div class="r"><span>Fit model and effort to each task</span><span class="v">On</span></div>
-              <div class="r"><span>Light tasks</span><span class="v">Haiku 5.5 at low effort</span></div>
-              <div class="r" data-heavy><span>Heavy tasks</span><span class="v">My model, one effort level up</span></div>
+              <div class="r"><span>Easy tasks</span><span class="v">Haiku 5.5 at low effort</span></div>
+              <div class="r" data-pick><span>Mid tasks</span><span class="v">Sonnet 5.5 at medium effort</span></div>
+              <div class="r"><span>Hard tasks</span><span class="v">Opus 5.5 at max effort</span></div>
             </div>
-            <div class="foot" data-note>Heavy tasks run as usual here: this session already runs on Opus 5.5 at max effort.</div>
+            <div class="foot">Sonnet 5.5 grades each new task, as part of your plan’s usage, and the task runs on its grade’s model and effort.</div>
           </div>
         </div>
         <figcaption>The settings pane, opened with /companion</figcaption>
@@ -472,37 +473,42 @@ html { scroll-behavior: smooth; }
       await c.wait(2400);
     },
     route: async function (c) {
-      var quote = c.$('.quote'), routed = c.$('.routed'), link = c.$('.routed .link'), list = c.$('.choices');
-      var prompt = quote.textContent;
-      routed.classList.add('out');
+      // Three tasks in a row, each graded and run on its grade's model; it rests on the first.
+      var quote = c.$('.quote'), routed = c.$('.routed'), list = c.$('.choices');
+      var tasks = [
+        { prompt: quote.textContent, line: routed.innerHTML },
+        { prompt: 'add a test for the config loader', line: 'Mid task · Sonnet 5.5 at medium effort · <span class="link">Ask again on Opus 5.5</span>' },
+        { prompt: 'split the loader into one module per source', line: 'Hard task · Opus 5.5 at max effort' }
+      ];
       list.classList.add('fade', 'out');
+      for (var i = 0; i < tasks.length; i++) {
+        routed.classList.add('out');
+        await c.wait(300);
+        await type(quote, tasks[i].prompt, 34);
+        await c.wait(800);
+        routed.innerHTML = tasks[i].line;
+        routed.classList.remove('out');
+        await c.wait(2300);
+      }
+      routed.classList.add('out');
       await c.wait(300);
-      await type(quote, prompt, 38);
-      await c.wait(500);
+      quote.textContent = tasks[0].prompt;
+      routed.innerHTML = tasks[0].line;
       routed.classList.remove('out');
-      await c.wait(900);
       list.classList.remove('out');
-      await c.wait(700);
-      await c.point(link, 0.4, 0.6);
-      link.classList.add('is-hover');
-      await c.wait(1300);
-      link.classList.remove('is-hover');
-      c.park();
-      await c.wait(2800);
+      await c.wait(2600);
     },
     settings: async function (c) {
-      var row = c.$('[data-heavy]'), value = row.querySelector('.v'), note = c.$('[data-note]');
+      var row = c.$('[data-pick]'), value = row.querySelector('.v');
       var pick = value.textContent;
       await c.point(row, 0.78, 0.55);
       row.classList.add('is-hover');
       await c.wait(500);
       await press(row);
-      await swap(value, 'One model and one effort level up');
-      note.classList.add('fade', 'out');
+      await swap(value, 'Sonnet 5.5 at high effort');
       await c.wait(2600);
       await press(row);
       await swap(value, pick);
-      note.classList.remove('out');
       row.classList.remove('is-hover');
       c.park();
       await c.wait(2800);

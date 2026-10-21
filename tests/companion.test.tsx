@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 import type { ModelUsage, On, RenderSurface, TurnStepInput } from 'claude-code'
 
-import { REDO_HREF, gradeTask, isOrder, nextLevel } from '../hooks/register'
+import { REDO_HREF, gradeOf, gradeTask, isOrder, nextLevel } from '../hooks/register'
 
 const PLUGIN = 'companion'
 const PANE = 'last-prompt'
@@ -25,7 +25,9 @@ const ALL_THREE = `Next: 1. ${CHOICES[0]} · 2. ${CHOICES[1]} · 3. ${CHOICES[2]
 const NOTHING_DRAWS: readonly RenderSurface[] = []
 // The model and effort the session's own requests name, and what a fitted turn sends instead.
 const SONNET_HIGH = { model: 'claude-sonnet-5-5', effort: 'high' } as const
+const OPUS_MAX = { model: 'claude-opus-5-5', effort: 'max' } as const
 const HAIKU_LOW = { model: 'claude-haiku-5-5', effort: 'low' } as const
+const SONNET_MEDIUM = { model: 'claude-sonnet-5-5', effort: 'medium' } as const
 const QUESTION = 'what does the config loader do?'
 
 /** How the engine beneath the plugins behaves in one test. */
@@ -44,12 +46,16 @@ type Setup = {
   contextTokens?: number
   /** A model whose requests fail before they answer: with an error, or with no response at all. */
   refused?: { model: string; how: 'throws' | 'no-response' }
+  /** What the grading answers for each new request; "mid" for any other. */
+  grades?: Readonly<Record<string, string>>
 }
 
 /** What the engine did beneath the plugins, as the tests read it back. */
 type World = {
   clock: MockClock
   requests: { model: string; effort: string | undefined; maxTokens: number | undefined; prompt: string }[]
+  /** The grading calls, apart from the suggestion calls in `requests`. */
+  graded: { model: string; effort: string | undefined; system: unknown; prompt: string }[]
   /** The model and effort each request of a turn went with, as the engine beneath the plugins received it. */
   steps: { model: string; effort: TurnStepInput['effort'] }[]
   box: string
@@ -68,11 +74,12 @@ type World = {
  * opening (placed wherever a surface attaches), and a Windows host whose processes all succeed.
  */
 function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): World {
-  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused } = setup
+  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused, grades = {} } = setup
   mock.store(on, stored === undefined ? {} : { settings: stored })
   const world: World = {
     clock: mock.clock(on, { now: 1_000 }),
     requests: [],
+    graded: [],
     steps: [],
     box: '',
     opened: [],
@@ -93,6 +100,12 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('model.complete', async (_, e) => {
+    const graded = typeof e.prompt === 'string' ? /<new_request>\n([\s\S]*?)\n<\/new_request>/.exec(e.prompt)?.[1] : undefined
+    if (graded !== undefined && typeof e.prompt === 'string') {
+      world.graded.push({ model: e.model, effort: e.effort, system: e.system, prompt: e.prompt })
+      if (declinedBy.includes(e.model)) return { value: { isAnswered: false as const, reason: 'empty-reply' as const, usage: NO_USAGE } }
+      return { value: { isAnswered: true as const, text: grades[graded] ?? 'mid', usage: NO_USAGE } }
+    }
     world.requests.push({ model: e.model, effort: e.effort, maxTokens: e.maxTokens, prompt: e.prompt })
     if (lateMs > 0) await world.clock.sleep(lateMs)
     if (declinedBy.includes(e.model)) return { value: { isAnswered: false as const, reason: 'empty-reply' as const, usage: NO_USAGE } }
@@ -784,48 +797,117 @@ describe('companion', () => {
 })
 
 describe('task routing', () => {
-  test('is off by default: requests go as the engine made them, and the band shows no task', async ($, on) => {
+  test('is off by default: nothing is graded, requests go as the engine made them, and the band shows no task', async ($, on) => {
     const world = engine(on, ['terminal'])
 
     await typed($, QUESTION)
     await runTurn($, 't1', QUESTION, SONNET_HIGH)
 
+    expect(world.graded).toEqual([])
     expect(world.steps).toEqual([SONNET_HIGH])
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect(await band.find({ key: 'task' })).toBeUndefined()
     await band.unmount()
   })
 
-  test('a light question goes to Haiku 5.5 at low effort for every request of its turn, and the band says so', async ($, on) => {
-    const world = engine(on, ['terminal'], { stored: { route: true } })
+  test('Sonnet 5.5 grades a new task once, and an easy one runs on Haiku 5.5 at low effort for every request of its turn', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
 
     await typed($, QUESTION)
-    await runTurn($, 't1', QUESTION, SONNET_HIGH, 2)
+    await runTurn($, 't1', QUESTION, OPUS_MAX, 2)
 
+    expect(world.graded.map(({ model, effort }) => ({ model, effort }))).toEqual([{ model: 'claude-sonnet-5-5', effort: 'low' }])
+    expect(world.graded[0]?.prompt).toContain(`<new_request>\n${QUESTION}\n</new_request>`)
+    expect(String(world.graded[0]?.system)).toContain('Answer with one word: easy, mid or hard.')
     expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW])
     const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await terminal.find({ key: 'task' }))?.text).toBe('Light task · Haiku 5.5 at low effort')
-    expect((await terminal.find({ key: 'redo' }))?.props.label).toBe('Ask again on Sonnet 5.5')
+    expect((await terminal.find({ key: 'task' }))?.text).toBe('Easy task · Haiku 5.5 at low effort')
+    expect((await terminal.find({ key: 'redo' }))?.props.label).toBe('Ask again on Opus 5.5')
     await terminal.unmount()
     // Elsewhere one markdown line: what the turn ran on, then the redo as a link the plugin answers.
     for (const surface of ['desktop', 'vscode'] as const) {
       const band = await $.ui.mount({ ...BAND, surface })
       const task = await band.find({ key: 'task' })
-      expect(plainOf(task?.text ?? '')).toBe('Light task · Haiku 5.5 at low effort · Ask again on Sonnet 5.5')
+      expect(plainOf(task?.text ?? '')).toBe('Easy task · Haiku 5.5 at low effort · Ask again on Opus 5.5')
       expect(task?.props.pressableLinks).toEqual([REDO_HREF])
       await band.unmount()
     }
   })
 
+  test("a mid task runs on Sonnet 5.5 at medium effort and a hard one on Opus 5.5 at max, shown where that is the session's own too", async ($, on) => {
+    const mid = 'add a test for the parser'
+    const hard = 'refactor the config loader into one module per source'
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [mid]: 'mid', [hard]: 'hard' } })
+
+    await typed($, mid)
+    await runTurn($, 't1', mid, OPUS_MAX)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'task' }))?.text).toBe('Mid task · Sonnet 5.5 at medium effort')
+    await band.unmount()
+
+    await typed($, hard)
+    await runTurn($, 't2', hard, OPUS_MAX)
+    const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await after.find({ key: 'task' }))?.text).toBe('Hard task · Opus 5.5 at max effort')
+    expect(await after.find({ key: 'redo' })).toBeUndefined()
+    await after.unmount()
+
+    expect(world.steps).toEqual([SONNET_MEDIUM, OPUS_MAX])
+  })
+
+  test('the model decides, not the rules: a short question it grades hard runs on the hard pick', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'hard' } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+
+    expect(world.steps).toEqual([OPUS_MAX])
+  })
+
+  test('where the model gives no grade, the rules grade the task', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true }, declinedBy: ['claude-sonnet-5-5'] })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    const hard = 'migrate the store to the new key format'
+    await typed($, hard)
+    await runTurn($, 't2', hard, SONNET_HIGH)
+
+    expect(world.graded.length).toBe(2)
+    expect(world.steps).toEqual([HAIKU_LOW, OPUS_MAX])
+  })
+
+  test('a task switches at any length of conversation', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true }, contextTokens: 450_000, grades: { [QUESTION]: 'easy' } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+
+    expect(world.steps).toEqual([HAIKU_LOW])
+  })
+
+  test('a session with a 1M context window keeps it on the model it switches to', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, { model: 'claude-opus-5-5[1m]', effort: 'max' })
+
+    expect(world.steps).toEqual([{ model: 'claude-haiku-5-5[1m]', effort: 'low' }])
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'task' }))?.text).toBe('Easy task · Haiku 5.5 at low effort')
+    expect((await band.find({ key: 'redo' }))?.props.label).toBe('Ask again on Opus 5.5')
+    await band.unmount()
+  })
+
   test('while the turn runs the band offers no redo; after it, the redo asks the prompt again as usual', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true } })
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true }, grades: { [QUESTION]: 'easy' } })
 
     await typed($, QUESTION)
     await $.turn.start({ text: QUESTION, turnId: 't1' })
     await step($, { turnId: 't1', index: 0, messageCount: 1, ...SONNET_HIGH })
     const working = await $.ui.mount({ ...BAND, surface: 'vscode', props: { ...BAND.props, isWorking: true } })
     const busy = await working.find({ key: 'task' })
-    expect(plainOf(busy?.text ?? '')).toBe('Light task · Haiku 5.5 at low effort')
+    expect(plainOf(busy?.text ?? '')).toBe('Easy task · Haiku 5.5 at low effort')
     expect(busy?.props.pressableLinks).toBeUndefined()
     await working.unmount()
     await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
@@ -835,130 +917,87 @@ describe('task routing', () => {
     expect(world.submitted).toEqual([QUESTION, QUESTION])
     await runTurn($, 't2', QUESTION, SONNET_HIGH)
     expect(world.steps).toEqual([HAIKU_LOW, SONNET_HIGH])
+    expect(world.graded.length).toBe(1)
 
+    // The turn asked again ran on the session's own model and effort, under its grade, so it offers no redo itself.
     await band.redraw()
-    expect(await band.find({ key: 'task' })).toBeUndefined()
+    const again = await band.find({ key: 'task' })
+    expect(plainOf(again?.text ?? '')).toBe('Easy task · Sonnet 5.5 at high effort')
+    expect(again?.props.pressableLinks).toBeUndefined()
     await band.unmount()
   })
 
-  test('a heavy task runs one effort level up, its follow-ups stay heavy, and a new task is graded afresh', async ($, on) => {
-    const world = engine(on, ['terminal'], { stored: { route: true } })
-
-    const heavy = 'refactor the config loader into one module per source'
-    await typed($, heavy)
-    await runTurn($, 't1', heavy, SONNET_HIGH)
-    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.find({ key: 'task' }))?.text).toBe('Heavy task · Sonnet 5.5 at xhigh effort')
-    expect(await band.find({ key: 'redo' })).toBeUndefined()
-    await band.unmount()
-
-    const followUp = 'also update the docs and the changelog for it please'
-    await typed($, followUp)
-    await runTurn($, 't2', followUp, SONNET_HIGH)
-
-    const fresh =
-      'Next I would like a short note in the README that explains where the settings live, who can change them, ' +
-      'how other open sessions pick a change up, and what happens to a value that is no longer one of the options ' +
-      'a picker offers, in plain words for people who have never opened the settings pane.'
-    await typed($, fresh)
-    await runTurn($, 't3', fresh, SONNET_HIGH)
-
-    expect(world.steps).toEqual([{ ...SONNET_HIGH, effort: 'xhigh' }, { ...SONNET_HIGH, effort: 'xhigh' }, SONNET_HIGH])
-  })
-
-  test('with one model up picked, a heavy task moves up a model too; at the top, at max effort, it stays', async ($, on) => {
-    const world = engine(on, ['terminal'], { stored: { route: true, heavy: 'model' } })
-
-    const heavy = 'implement the export command for the settings'
-    await typed($, heavy)
-    await runTurn($, 't1', heavy, SONNET_HIGH)
-    const next = 'migrate the store to the new key format'
-    await typed($, next)
-    await runTurn($, 't2', next, { model: 'claude-fable-5-1', effort: 'max' })
-
-    expect(world.steps).toEqual([
-      { model: 'claude-opus-5-5', effort: 'xhigh' },
-      { model: 'claude-fable-5-1', effort: 'max' },
-    ])
-    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await band.find({ key: 'task' })).toBeUndefined()
-    await band.unmount()
-  })
-
-  test('past 100,000 tokens of conversation a task keeps the session model and effort', async ($, on) => {
-    const world = engine(on, ['terminal'], { stored: { route: true }, contextTokens: 150_000 })
-
-    await typed($, QUESTION)
-    await runTurn($, 't1', QUESTION, SONNET_HIGH)
-    const heavy = 'rewrite the settings pane from scratch'
-    await typed($, heavy)
-    await runTurn($, 't2', heavy, SONNET_HIGH)
-
-    expect(world.steps).toEqual([SONNET_HIGH, SONNET_HIGH])
-  })
-
-  test('a reply keeps a light task on Haiku; a request for work ends it', async ($, on) => {
-    const world = engine(on, ['terminal'], { stored: { route: true } })
-
-    await typed($, QUESTION)
-    await runTurn($, 't1', QUESTION, SONNET_HIGH)
-    await typed($, 'and the tests?')
-    await runTurn($, 't2', 'and the tests?', SONNET_HIGH)
+  test("replies keep the running task's grade with no grading; new work is graded afresh", async ($, on) => {
     const work = 'fix the failing parser test in the loader please'
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy', [work]: 'mid' } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    await typed($, 'and the tests?')
+    await runTurn($, 't2', 'and the tests?', OPUS_MAX)
     await typed($, work)
-    await runTurn($, 't3', work, SONNET_HIGH)
+    await runTurn($, 't3', work, OPUS_MAX)
 
-    expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW, SONNET_HIGH])
+    expect(world.graded.length).toBe(2)
+    expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW, SONNET_MEDIUM])
   })
 
-  test('after a light question a short order runs as usual: the work does not stay on Haiku', async ($, on) => {
-    const world = engine(on, ['terminal'], { stored: { route: true } })
+  test('after an easy question an order is graded as the work it asks for, read with the question and the answer', async ($, on) => {
+    const order = 'add that to the docs'
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy', [order]: 'mid' } })
 
     await typed($, QUESTION)
-    await runTurn($, 't1', QUESTION, SONNET_HIGH)
-    await typed($, 'add that to the docs')
-    await runTurn($, 't2', 'add that to the docs', SONNET_HIGH)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    await typed($, order)
+    await runTurn($, 't2', order, OPUS_MAX)
 
-    expect(world.steps).toEqual([HAIKU_LOW, SONNET_HIGH])
-    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await band.find({ key: 'task' })).toBeUndefined()
-    await band.unmount()
+    expect(world.steps).toEqual([HAIKU_LOW, SONNET_MEDIUM])
+    const grading = world.graded[1]?.prompt ?? ''
+    expect(grading).toContain(`<previous_request>\n${QUESTION}\n</previous_request>`)
+    expect(grading).toContain(`<claude_reply_end>\n${REPLY}\n</claude_reply_end>`)
+    expect(grading).toContain(`<new_request>\n${order}\n</new_request>`)
   })
 
-  test('a pressed choice that asks continues a light task; one that orders work runs as usual', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true } })
+  test('a pressed choice that asks continues an easy task; one that orders work is graded', async ($, on) => {
+    const world = engine(on, ['vscode'], {
+      showsSuggestions: false,
+      stored: { route: true },
+      grades: { [QUESTION]: 'easy', [CHOICES[0]]: 'mid' },
+    })
 
     await typed($, QUESTION)
-    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
     for (const [turnId, n, text] of [['t2', 2, CHOICES[1]], ['t3', 1, CHOICES[0]]] as const) {
       await world.clock.advance(1)
       const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
       await pressChoiceIn(band, n)
       await band.unmount()
-      await runTurn($, turnId, text, SONNET_HIGH)
+      await runTurn($, turnId, text, OPUS_MAX)
     }
 
     expect(world.submitted).toEqual([QUESTION, CHOICES[1], CHOICES[0]])
-    expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW, SONNET_HIGH])
+    expect(world.graded.length).toBe(2)
+    expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW, SONNET_MEDIUM])
   })
 
   test('a pressed choice continues the task it answers', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true } })
+    const hard = 'refactor the config loader into one module per source'
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true }, grades: { [hard]: 'hard' } })
 
-    const heavy = 'refactor the config loader into one module per source'
-    await typed($, heavy)
-    await runTurn($, 't1', heavy, SONNET_HIGH)
+    await typed($, hard)
+    await runTurn($, 't1', hard, SONNET_HIGH)
     await world.clock.advance(1)
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
     await pressChoiceIn(band, 1)
     await band.unmount()
     await runTurn($, 't2', CHOICES[0], SONNET_HIGH)
 
-    expect(world.steps).toEqual([{ ...SONNET_HIGH, effort: 'xhigh' }, { ...SONNET_HIGH, effort: 'xhigh' }])
+    expect(world.graded.length).toBe(1)
+    expect(world.steps).toEqual([OPUS_MAX, OPUS_MAX])
   })
 
-  test('subagents, slash commands and models the plugin cannot read keep their requests', async ($, on) => {
-    const world = engine(on, ['terminal'], { stored: { route: true } })
+  test('subagents, slash commands and models the plugin cannot read keep their requests, and nothing is graded', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
 
     // A subagent's turn.
     await typed($, QUESTION)
@@ -968,22 +1007,16 @@ describe('task routing', () => {
     const review = '/review the parser'
     await $.prompt.submit({ text: review, command: { name: 'review', args: 'the parser' }, wait: false, origin: { kind: 'composer' } })
     await runTurn($, 't1', review, SONNET_HIGH)
-    // A provider's own spelling of a model, then Haiku already.
+    // A provider's own spelling of a model.
     await typed($, QUESTION)
     await runTurn($, 't3', QUESTION, { model: 'anthropic.claude-sonnet-5-5', effort: 'high' })
-    await typed($, 'what does the store keep?')
-    await runTurn($, 't4', 'what does the store keep?', { model: 'claude-haiku-5-5', effort: 'medium' })
 
-    expect(world.steps).toEqual([
-      SONNET_HIGH,
-      SONNET_HIGH,
-      { model: 'anthropic.claude-sonnet-5-5', effort: 'high' },
-      { model: 'claude-haiku-5-5', effort: 'medium' },
-    ])
+    expect(world.graded).toEqual([])
+    expect(world.steps).toEqual([SONNET_HIGH, SONNET_HIGH, { model: 'anthropic.claude-sonnet-5-5', effort: 'high' }])
   })
 
   test("an SDK host's prompt with a surface attached, as from the Claude app, is the person's and is fitted", async ($, on) => {
-    const world = engine(on, ['mobile'], { stored: { route: true } })
+    const world = engine(on, ['mobile'], { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
 
     await $.prompt.submit({ text: QUESTION, wait: false, origin: { kind: 'sdk' } })
     await runTurn($, 't1', QUESTION, SONNET_HIGH)
@@ -991,17 +1024,18 @@ describe('task routing', () => {
     expect(world.steps).toEqual([HAIKU_LOW])
   })
 
-  test("a program's prompt where nothing is drawn (claude -p, the Agent SDK) keeps its model and effort", async ($, on) => {
+  test("a program's prompt where nothing is drawn (claude -p, the Agent SDK) keeps its model and effort, ungraded", async ($, on) => {
     const world = engine(on, NOTHING_DRAWS, { stored: { route: true } })
 
     await $.prompt.submit({ text: QUESTION, wait: false, origin: { kind: 'sdk' } })
     await runTurn($, 't1', QUESTION, SONNET_HIGH)
 
+    expect(world.graded).toEqual([])
     expect(world.steps).toEqual([SONNET_HIGH])
   })
 
   test('a request the engine sends on another model mid-turn, a fallback, keeps that model', async ($, on) => {
-    const world = engine(on, ['terminal'], { stored: { route: true } })
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
 
     await typed($, QUESTION)
     await $.turn.start({ text: QUESTION, turnId: 't1' })
@@ -1013,15 +1047,20 @@ describe('task routing', () => {
 
   for (const how of ['throws', 'no-response'] as const) {
     test(`a fitted request that fails before it answers (${how}) goes again as the engine made it, and fitting stops`, async ($, on) => {
-      const world = engine(on, ['terminal'], { stored: { route: true }, refused: { model: 'claude-haiku-5-5', how } })
+      const hard = 'refactor the config loader into one module per source'
+      const world = engine(on, ['terminal'], {
+        stored: { route: true },
+        grades: { [QUESTION]: 'easy', [hard]: 'hard' },
+        refused: { model: 'claude-haiku-5-5', how },
+      })
 
       await typed($, QUESTION)
       await runTurn($, 't1', QUESTION, SONNET_HIGH)
-      const heavy = 'refactor the config loader into one module per source'
-      await typed($, heavy)
-      await runTurn($, 't2', heavy, SONNET_HIGH)
+      await typed($, hard)
+      await runTurn($, 't2', hard, SONNET_HIGH)
 
       expect(world.steps).toEqual([HAIKU_LOW, SONNET_HIGH, SONNET_HIGH])
+      expect(world.graded.length).toBe(1)
       expect(world.toasts).toEqual(['Could not send this task to Haiku 5.5, so the session runs on its own model and effort from here.'])
       const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
       expect(await band.find({ key: 'task' })).toBeUndefined()
@@ -1030,91 +1069,91 @@ describe('task routing', () => {
   }
 
   test('where no surface attaches, the line beneath the answer says what a fitted turn ran on', async ($, on) => {
-    engine(on, NOTHING_DRAWS, { stored: { route: true } })
+    engine(on, NOTHING_DRAWS, { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
 
     await typed($, QUESTION)
     const done = await runTurn($, 't1', QUESTION, SONNET_HIGH)
 
-    expect(done.text).toBe(`Light task · Haiku 5.5 at low effort\n${ALL_THREE}`)
+    expect(done.text).toBe(`Easy task · Haiku 5.5 at low effort\n${ALL_THREE}`)
   })
 
   test('in the mobile pane a fitted turn shows with its redo', async ($, on) => {
-    const world = engine(on, ['mobile'], { stored: { route: true } })
+    const world = engine(on, ['mobile'], { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
 
     await $.prompt.submit({ text: QUESTION, wait: false, origin: { kind: 'bridge' } })
     await runTurn($, 't1', QUESTION, SONNET_HIGH)
 
     const pane = await $.ui.mount({ ...PANE_MOUNT, surface: 'mobile' })
-    expect(plainOf((await pane.find({ key: 'task' }))?.text ?? '')).toBe('Light task · Haiku 5.5 at low effort · Ask again on Sonnet 5.5')
+    expect(plainOf((await pane.find({ key: 'task' }))?.text ?? '')).toBe('Easy task · Haiku 5.5 at low effort · Ask again on Sonnet 5.5')
     await pane.press({ key: 'task', link: { href: REDO_HREF } })
     expect(world.submitted).toEqual([QUESTION, QUESTION])
     await pane.unmount()
   })
 
-  test('the settings pane shows the routing settings and saves a pick for the next turn', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false })
+  test("the settings pane shows each grade's pick and saves one for the next task", async ($, on) => {
+    const hard = 'implement the export command for the settings'
+    const world = engine(on, ['vscode'], { showsSuggestions: false, grades: { [hard]: 'hard' } })
 
     const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
     expect((await pane.find({ key: 'route' }))?.props.value).toBe('off')
-    expect((await pane.find({ key: 'light' }))?.props.value).toBe('haiku')
-    expect((await pane.find({ key: 'heavy' }))?.props.value).toBe('effort')
+    expect((await pane.find({ key: 'easy' }))?.props.value).toBe('claude-haiku-5-5:low')
+    expect((await pane.find({ key: 'mid' }))?.props.value).toBe('claude-sonnet-5-5:medium')
+    expect((await pane.find({ key: 'hard' }))?.props.value).toBe('claude-opus-5-5:max')
     await pane.select({ key: 'route', value: 'on' })
-    await pane.select({ key: 'heavy', value: 'model' })
+    await pane.select({ key: 'hard', value: 'claude-fable-5-1:high' })
     await pane.redraw()
     expect((await pane.find({ key: 'route' }))?.props.value).toBe('on')
-    expect((await pane.find({ key: 'heavy' }))?.props.value).toBe('model')
+    expect((await pane.find({ key: 'hard' }))?.props.value).toBe('claude-fable-5-1:high')
     await pane.unmount()
 
-    const heavy = 'implement the export command for the settings'
-    await typed($, heavy)
-    await runTurn($, 't1', heavy, SONNET_HIGH)
-    expect(world.steps).toEqual([{ model: 'claude-opus-5-5', effort: 'xhigh' }])
+    await typed($, hard)
+    await runTurn($, 't1', hard, SONNET_HIGH)
+    expect(world.steps).toEqual([{ model: 'claude-fable-5-1', effort: 'high' }])
   })
 
-  test('the settings say when the session already stands as high as the heavy pick goes', async ($, on) => {
-    engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true } })
-    const atMax = 'Heavy tasks run as usual here: this session already runs on Opus 5.5 at max effort.'
+  test('with a grade on "my model and effort", the settings say what that is in this session', async ($, on) => {
+    engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true, hard: 'own' }, grades: { [QUESTION]: 'easy' } })
+    const own = '“My model and effort” is Opus 5.5 at max effort in this session.'
 
     const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
-    expect(await pane.find({ key: 'heavyNote' })).toBeUndefined()
+    expect(await pane.find({ key: 'ownNote' })).toBeUndefined()
     await typed($, QUESTION)
-    await runTurn($, 't1', QUESTION, { model: 'claude-opus-5-5', effort: 'max' })
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
     await pane.redraw()
-    expect((await pane.find({ key: 'heavyNote' }))?.text).toBe(atMax)
+    expect((await pane.find({ key: 'ownNote' }))?.text).toBe(own)
     const mobile = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'mobile' })
-    expect((await mobile.find({ key: 'heavyNote' }))?.text).toBe(atMax)
+    expect((await mobile.find({ key: 'ownNote' }))?.text).toBe(own)
     await mobile.unmount()
 
-    // One model up still has somewhere to go from Opus; from Fable at max effort it has not.
-    await pane.select({ key: 'heavy', value: 'model' })
+    await pane.select({ key: 'hard', value: 'claude-opus-5-5:max' })
     await pane.redraw()
-    expect(await pane.find({ key: 'heavyNote' })).toBeUndefined()
-    await typed($, 'and the tests?')
-    await runTurn($, 't2', 'and the tests?', { model: 'claude-fable-5-1', effort: 'max' })
-    await pane.redraw()
-    expect((await pane.find({ key: 'heavyNote' }))?.text).toBe(
-      'Heavy tasks run as usual here: this session already runs on Fable 5.1 at max effort.',
-    )
+    expect(await pane.find({ key: 'ownNote' })).toBeUndefined()
     await pane.unmount()
   })
 
   test('where no panel draws, /companion says how tasks are fitted', async ($, on) => {
-    engine(on, NOTHING_DRAWS, { stored: { route: true, light: 'keep' } })
+    engine(on, NOTHING_DRAWS, { stored: { route: true, easy: 'own' } })
     const run = () => $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
 
     const ran = await run()
     expect(ran.text).toContain(
-      'Clicking a choice: Sends it as my message · Fit to the task: on (light tasks: My model and effort; heavy tasks: My model, one effort level up)',
+      'Clicking a choice: Sends it as my message · Fit to the task: on (easy tasks: My model and effort; ' +
+        'mid tasks: Sonnet 5.5 at medium effort; hard tasks: Opus 5.5 at max effort)',
     )
-    expect(ran.text).not.toContain('Heavy tasks run as usual')
+    expect(ran.text).not.toContain('in this session')
 
     await typed($, QUESTION)
-    await runTurn($, 't1', QUESTION, { model: 'claude-opus-5-5', effort: 'max' })
-    expect((await run()).text).toContain('Heavy tasks run as usual here: this session already runs on Opus 5.5 at max effort.')
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    expect((await run()).text).toContain('“My model and effort” is Opus 5.5 at max effort in this session.')
   })
 
-  test('grading: work verbs, long prompts and many paths are heavy; plain questions light; the rest standard', () => {
-    const heavy = [
+  test("the model's answer gives the grade it names first", () => {
+    const answers = ['easy', 'Mid.', 'This one is hard.', 'medium', 'easy, not hard', 'no idea']
+    expect(answers.map(gradeOf)).toEqual(['easy', 'mid', 'hard', 'mid', 'easy', null])
+  })
+
+  test('the rules grade a task the model gives no grade for: work verbs, long prompts and many paths hard; plain questions easy; the rest mid', () => {
+    const hard = [
       'refactor the parser into a state machine',
       'Please implement the export command',
       'migrate the store to the new key format',
@@ -1123,7 +1162,7 @@ describe('task routing', () => {
       'update src/a.ts, src/b.ts, src/c.ts and docs/index.md to the new names',
       'word '.repeat(260),
     ]
-    const light = [
+    const easy = [
       QUESTION,
       'how does the cache work',
       'can you explain the settings pane?',
@@ -1132,7 +1171,7 @@ describe('task routing', () => {
       'show me the diff',
       'ok, so which model writes the suggestions?',
     ]
-    const standard = [
+    const mid = [
       'add a test for the parser',
       'why does the build fail?',
       'what is wrong with the loader?',
@@ -1150,26 +1189,30 @@ describe('task routing', () => {
       'would it be better to keep one module?',
     ]
 
-    expect(heavy.map(gradeTask)).toEqual(heavy.map(() => 'heavy'))
-    expect(light.map(gradeTask)).toEqual(light.map(() => 'light'))
-    expect(standard.map(gradeTask)).toEqual(standard.map(() => 'standard'))
+    expect(hard.map(gradeTask)).toEqual(hard.map(() => 'hard'))
+    expect(easy.map(gradeTask)).toEqual(easy.map(() => 'easy'))
+    expect(mid.map(gradeTask)).toEqual(mid.map(() => 'mid'))
   })
 
-  test('a reply or a follow-up of heavy work continues the running task; anything else starts one', () => {
+  test('a reply continues the running task; anything longer starts one, a follow-up of hard work included', () => {
     const typedChoice = 'How does the loader pick a source for each key'
     const orderChoice = 'Run the tests before opening the parser PR'
 
-    expect(nextLevel(QUESTION, null, [])).toEqual({ level: 'light', isNew: true })
-    expect(nextLevel('yes, go ahead', 'heavy', [])).toEqual({ level: 'heavy', isNew: false })
-    expect(nextLevel(`${typedChoice}?`, 'light', [typedChoice])).toEqual({ level: 'light', isNew: false })
-    expect(nextLevel(`${orderChoice}.`, 'light', [orderChoice])).toEqual({ level: 'standard', isNew: true })
-    expect(nextLevel(`${orderChoice}.`, 'heavy', [orderChoice])).toEqual({ level: 'heavy', isNew: false })
-    expect(nextLevel('now refactor the parser', 'light', [])).toEqual({ level: 'heavy', isNew: true })
-    expect(nextLevel('ok and now also update the readme and the changelog too', 'heavy', [])).toEqual({ level: 'heavy', isNew: false })
-    expect(nextLevel('add a test for the parser and run the whole suite again', 'light', [])).toEqual({ level: 'standard', isNew: true })
+    expect(nextLevel(QUESTION, null, [])).toEqual({ level: 'easy', isNew: true })
+    expect(nextLevel('yes, go ahead', 'hard', [])).toEqual({ level: 'hard', isNew: false })
+    expect(nextLevel(`${typedChoice}?`, 'easy', [typedChoice])).toEqual({ level: 'easy', isNew: false })
+    expect(nextLevel(`${orderChoice}.`, 'easy', [orderChoice])).toEqual({ level: 'mid', isNew: true })
+    expect(nextLevel(`${orderChoice}.`, 'hard', [orderChoice])).toEqual({ level: 'hard', isNew: false })
+    expect(nextLevel('now refactor the parser', 'easy', [])).toEqual({ level: 'hard', isNew: true })
+    expect(nextLevel('ok and now also update the readme and the changelog too', 'hard', [])).toEqual({ level: 'mid', isNew: true })
+    expect(nextLevel('What does Time.deltaTime measure? One sentence.', 'hard', [])).toEqual({ level: 'easy', isNew: true })
+    expect(nextLevel('what is a NavMesh?', 'hard', [])).toEqual({ level: 'easy', isNew: true })
+    // Up to three words is a reply: it stays with the running task, ungraded.
+    expect(nextLevel('and the tests?', 'hard', [])).toEqual({ level: 'hard', isNew: false })
+    expect(nextLevel('add a test for the parser and run the whole suite again', 'easy', [])).toEqual({ level: 'mid', isNew: true })
   })
 
-  test('after a light question an order starts a task of its own; a question or thanks continues it', () => {
+  test('after an easy question an order starts a task of its own; a question or thanks continues it', () => {
     const orders = [
       'yes',
       "yep, let's do it",
@@ -1181,12 +1224,12 @@ describe('task routing', () => {
       'done, please merge and push',
       'squash-merge it for me',
     ]
-    const replies = ['why?', 'ok thanks', 'and the tests?', 'yes, but why?', 'makes sense', 'do you know why?', 'go on']
+    const replies = ['why?', 'ok thanks', 'and the tests?', 'yes, but why?', 'makes sense', 'why is that?', 'go on']
 
     expect(orders.map(isOrder)).toEqual(orders.map(() => true))
     expect(replies.map(isOrder)).toEqual(replies.map(() => false))
-    for (const order of orders) expect(nextLevel(order, 'light', [])).toEqual({ level: 'standard', isNew: true })
-    for (const reply of replies) expect(nextLevel(reply, 'light', [])).toEqual({ level: 'light', isNew: false })
-    expect(nextLevel('push the change', 'heavy', [])).toEqual({ level: 'heavy', isNew: false })
+    for (const order of orders) expect(nextLevel(order, 'easy', [])).toEqual({ level: 'mid', isNew: true })
+    for (const reply of replies) expect(nextLevel(reply, 'easy', [])).toEqual({ level: 'easy', isNew: false })
+    expect(nextLevel('push the change', 'hard', [])).toEqual({ level: 'hard', isNew: false })
   })
 })

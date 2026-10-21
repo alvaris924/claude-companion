@@ -301,14 +301,14 @@ footer a:hover { color: var(--fg); }
     <div class="feature" id="route">
       <div class="copytext">
         <h3>The right model for each task <span class="pill">Opt-in</span></h3>
-        <p>Turn it on and a short question goes to Haiku 5.5 at low effort, while a refactor or a migration thinks one level harder. Rules grade each task, with no model call of their own.</p>
-        <p>The band says whenever a turn ran on something other than your own model, and a quick one gets a link to ask again as usual. A task that starts after the conversation passes 100,000 tokens runs as usual, since a switch rereads the conversation without its cache.</p>
+        <p>Turn it on and Sonnet 5.5 grades each new task easy, mid or hard. Easy ones run on Haiku 5.5 at low effort, mid ones on Sonnet 5.5 at medium and hard ones on Opus 5.5 at max, and you pick what each grade runs on.</p>
+        <p>The band shows every task’s grade and the model it ran on, with a link to ask again on your own. Replies stay with their task, so a “yes” after hard work stays on the hard model.</p>
       </div>
-      <div class="demo" data-demo="route" role="img" aria-label="The band after a quick question: it ran on Haiku 5.5 at low effort, with a link to ask again on Opus 5.5">
+      <div class="demo" data-demo="route" role="img" aria-label="The band shows each task's grade and model: an easy question on Haiku 5.5, a mid task on Sonnet 5.5, a hard one on Opus 5.5">
         <div class="band">
           <div class="band-label">Companion</div>
           <div class="row"><div class="quote">what does the config loader do?</div><div class="more">⋯</div></div>
-          <div class="routed">Light task · Haiku 5.5 at low effort · <span class="link">Ask again on Opus 5.5</span></div>
+          <div class="routed">Easy task · Haiku 5.5 at low effort · <span class="link">Ask again on Opus 5.5</span></div>
           <div class="eyebrow">Suggested</div>
           <div class="choices">
             <div class="choice">↳ Where is the loader called from?</div>
@@ -338,9 +338,11 @@ footer a:hover { color: var(--fg); }
           <div class="group-h">Model and effort for each task</div>
           <div class="card">
             <div class="r"><span>Fit model and effort to each task</span><span class="v">On</span></div>
-            <div class="r" data-heavy><span>Heavy tasks</span><span class="v">My model, one effort level up</span></div>
+            <div class="r"><span>Easy tasks</span><span class="v">Haiku 5.5 at low effort</span></div>
+            <div class="r" data-pick><span>Mid tasks</span><span class="v">Sonnet 5.5 at medium effort</span></div>
+            <div class="r"><span>Hard tasks</span><span class="v">Opus 5.5 at max effort</span></div>
           </div>
-          <div class="foot" data-note>Heavy tasks run as usual here: this session already runs on Opus 5.5 at max effort.</div>
+          <div class="foot">Sonnet 5.5 grades each new task, as part of your plan’s usage, and the task runs on its grade’s model and effort.</div>
         </div>
       </div>
     </div>
@@ -542,37 +544,42 @@ footer a:hover { color: var(--fg); }
       await c.wait(2600);
     },
     route: async function (c) {
-      var quote = c.$('.quote'), routed = c.$('.routed'), link = c.$('.routed .link'), list = c.$('.choices');
-      var prompt = quote.textContent;
-      routed.classList.add('out');
+      // Three tasks in a row, each graded and run on its grade's model; it rests on the first.
+      var quote = c.$('.quote'), routed = c.$('.routed'), list = c.$('.choices');
+      var tasks = [
+        { prompt: quote.textContent, line: routed.innerHTML },
+        { prompt: 'add a test for the config loader', line: 'Mid task · Sonnet 5.5 at medium effort · <span class="link">Ask again on Opus 5.5</span>' },
+        { prompt: 'split the loader into one module per source', line: 'Hard task · Opus 5.5 at max effort' }
+      ];
       list.classList.add('fade', 'out');
+      for (var i = 0; i < tasks.length; i++) {
+        routed.classList.add('out');
+        await c.wait(300);
+        await type(quote, tasks[i].prompt, 34);
+        await c.wait(800);
+        routed.innerHTML = tasks[i].line;
+        routed.classList.remove('out');
+        await c.wait(2300);
+      }
+      routed.classList.add('out');
       await c.wait(300);
-      await type(quote, prompt, 38);
-      await c.wait(500);
+      quote.textContent = tasks[0].prompt;
+      routed.innerHTML = tasks[0].line;
       routed.classList.remove('out');
-      await c.wait(900);
       list.classList.remove('out');
-      await c.wait(700);
-      await c.point(link, 0.4, 0.6);
-      link.classList.add('is-hover');
-      await c.wait(1300);
-      link.classList.remove('is-hover');
-      c.park();
-      await c.wait(2800);
+      await c.wait(2600);
     },
     settings: async function (c) {
-      var row = c.$('[data-heavy]'), value = row.querySelector('.v'), note = c.$('[data-note]');
+      var row = c.$('[data-pick]'), value = row.querySelector('.v');
       var pick = value.textContent;
       await c.point(row, 0.78, 0.55);
       row.classList.add('is-hover');
       await c.wait(500);
       await press(row);
-      await swap(value, 'One model and one effort level up');
-      note.classList.add('fade', 'out');
+      await swap(value, 'Sonnet 5.5 at high effort');
       await c.wait(2600);
       await press(row);
       await swap(value, pick);
-      note.classList.remove('out');
       row.classList.remove('is-hover');
       c.park();
       await c.wait(2800);
