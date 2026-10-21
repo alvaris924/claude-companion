@@ -2,7 +2,7 @@
 
 A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click. See it in motion at [claudecompanion.vercel.app](https://claudecompanion.vercel.app).
 
-> **Status: v0.9.0, the first public release.** What comes next is in the [milestones](https://github.com/alvaris924/claude-companion/milestones).
+> **Status: v0.10.0.** What comes next is in the [milestones](https://github.com/alvaris924/claude-companion/milestones).
 
 ## What it does
 
@@ -53,7 +53,8 @@ The plugin is a hooks module, [`hooks/register.tsx`](hooks/register.tsx), on Cla
 | Version | Scope |
 |---|---|
 | v0.9.0 | First public release: the plugin as it runs today, install from this repository, CI that validates and tests it |
-| v1.0.0 | The model and effort fitted to each task; commands, settings and the state contract held stable, checked on every surface, screenshots in this README |
+| v0.10.0 | A quieter look, easy, mid and hard tasks graded by a model, a limit on switching in long conversations, a website |
+| v1.0.0 | Commands, settings and the state contract held stable, checked on every surface, screenshots in this README |
 
 ## Contributing
 
