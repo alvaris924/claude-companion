@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-21
+
 ### Changed
 
 - The grader leans hard and treats action requests as mid: easy is only a question, a lookup, a status check or a short explanation with nothing to change or run, anything that edits, runs, commits, merges or deploys is at least mid, and a request that could need hard-level reasoning is graded hard. Checked on 120 prompts typed in real sessions, easy grades that took 10 or more tool calls fell from 4 to 1 or 0 (#21).
@@ -35,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 - Suggestions are written by Sonnet 5.5 by default, in place of Fable 5.1, so a new install does not spend the most expensive model on every answer. Fable 5.1, Opus 5.5 and Haiku 5.5 stay one pick away in `/companion`, and a model already picked there is kept.
 
-[Unreleased]: https://github.com/alvaris924/claude-companion/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/alvaris924/claude-companion/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/alvaris924/claude-companion/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/alvaris924/claude-companion/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/alvaris924/claude-companion/releases/tag/v0.9.0
