@@ -25,10 +25,15 @@ Companion is a Claude Code plugin that keeps the person's last prompt in view an
 - [ADR-0007: Sonnet 5.5 is the default model](adr/0007-sonnet-default.md)
 - [ADR-0008: GitHub flow with tags, no development branch](adr/0008-branching-model.md)
 - [ADR-0009: Fit the model and effort to each task, by rules, under 100,000 tokens](adr/0009-model-and-effort-per-task.md)
+- [ADR-0010: A quiet look: theme keys, the type scale, and quiet buttons for the choices](adr/0010-a-quiet-look.md)
 
 ## The band
 
-The band directly above the prompt box shows `Last:` and the last prompt, a dim ⚙ that opens the settings and, once an answer is in, `Next:` and the choices. When the last turn ran on something other than the session's own model and effort, a dim row under the last prompt says what, with a redo button for a light task. The terminal cuts the prompt and each choice to its measured width. VS Code, the desktop app and the mobile app lay text out in their own fonts, where the columns they report undercount the room, so there the texts are handed over whole and wrap, a choice wrapping inside its button. The band steps aside while Claude Code shows a survey in the same place.
+The band directly above the prompt box shows the last prompt as a quote, a dim ⋯ at its end that opens the settings and, once an answer is in, a small "Suggested" label over the choices. When the last turn ran on something other than the session's own model and effort, a quiet line under the last prompt says what, with a link that asks again for a light task. VS Code, the desktop app and the mobile app draw each choice as a quiet button, a ↳ before the choice: the surface's secondary button, dark in VS Code like the ⋯, rather than its filled one. They lay text out in their own fonts, where the columns they report undercount the room, so there the texts are handed over whole and wrap, a choice wrapping inside its button. The terminal draws the choices as a row of buttons after `Next:`, the likeliest in the accent colour, and cuts the prompt and each choice to its measured width. The band steps aside while Claude Code shows a survey in the same place.
+
+## The look
+
+Quiet, after Apple's developer pages and calm note apps: hierarchy from the type scale rather than from boxes and labels, secondary text dimmed, and as little chrome as the surface allows. VS Code and the desktop app draw every button in their own button chrome, so outside the terminal the choices ask for the secondary button rather than the filled one, and the last prompt and the redo are markdown the plugin writes: a quote, and a link whose press the plugin answers itself. The link points at the part of this page it stands for, so a modified click that opens it lands somewhere useful, and everything the person or a model wrote is escaped, so nothing in it formats or links. Every colour is a theme key (`suggestion` for the accent, `promptBorder` for the terminal's quote bar and the settings cards), so each theme, dark or light, draws it in its own colours; no colour is written as a hex value. Small labels are `caption` in semibold and notes are `footnote`; the terminal has one size and draws semibold as bold. The settings group their pickers in rounded cards, each with a heading over it and a short note under it ([ADR-0010](adr/0010-a-quiet-look.md)).
 
 ## Suggested next messages
 
@@ -54,11 +59,11 @@ A task changes model or effort only while the conversation is under 100,000 toke
 
 Left as they are: standard tasks, subagents, slash commands and skills, prompts a program sends where nothing is drawn (`claude -p`, the Agent SDK), models the plugin cannot read, such as a provider's own spelling of an id, and a request the engine sends on another model in the middle of a turn, such as a fallback. A fitted request that fails before it answers, as when an organization blocks the model, goes again as the engine made it; fitting then stops for the rest of the session, and a notice says so.
 
-When a turn ran on something other than the session's own model and effort, the band says what under the last prompt ("Light task: Haiku 5.5 at low effort") until the next prompt. For a light task, once the turn has ended, a button beside it asks the last prompt again on the session's own model and effort, and that task's follow-ups stay there. Where no surface attaches, the same words lead the line beneath the answer.
+When a turn ran on something other than the session's own model and effort, the band says what under the last prompt ("Light task · Haiku 5.5 at low effort") until the next prompt. For a light task, once the turn has ended, a link beside it ("Ask again on Opus 5.5") asks the last prompt again on the session's own model and effort, and that task's follow-ups stay there. Where no surface attaches, the same words lead the line beneath the answer.
 
 ## Settings
 
-`/companion`, or the ⚙ in the band, opens a pane of pickers in two groups, the suggested next messages and the model and effort for each task:
+`/companion`, or the ⋯ in the band, opens a pane of pickers in two groups, the suggested next messages and the model and effort for each task, each group a rounded card with a short note under it:
 
 | Setting | Options | Default |
 |---|---|---|
@@ -120,6 +125,6 @@ The contribution workflow is in [CONTRIBUTING.md](../CONTRIBUTING.md); rules for
 
 - **No band in VS Code.** The extension draws plugin UI from 2.1.300; older builds show the choices as a line beneath the answer.
 - **No suggestions at all.** Check that suggestions are on in `/companion`, and that the session is not a headless run. `claude --debug` logs a line for every hook that failed.
-- **A light task needed more than Haiku.** Press the redo button beside the task in the band, which asks again on your own model and effort. If it happens often, set Light tasks to "My model and effort" in `/companion`, or turn fitting off.
+- **A light task needed more than Haiku.** Press "Ask again on …" beside the task in the band, which asks again on your own model and effort. If it happens often, set Light tasks to "My model and effort" in `/companion`, or turn fitting off.
 - **A notice says a task could not be sent to a model.** That model is not available to the session, for instance because an organization blocks it. Fitting is off for the rest of that session; pick Light and Heavy tasks that avoid that model.
 - **A tool Claude Code serves on `127.0.0.1` never appears**, such as the plugin-authoring skill's secret scan. Some antivirus web filters rewrite the responses of local HTTP servers. Seen with Norton's web protection on Windows: responses to requests that look like MCP traffic came back marked as chunked without being chunked, so every `tools/list` failed with `InvalidHTTPResponse` in the debug log. An exception for `127.0.0.1` in the antivirus's web protection fixed it.

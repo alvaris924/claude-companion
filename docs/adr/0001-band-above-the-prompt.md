@@ -1,6 +1,6 @@
 # ADR-0001: Draw in the band above the prompt
 
-- Status: accepted
+- Status: accepted; its look refined by [ADR-0010](0010-a-quiet-look.md)
 - Date: 2026-10-16
 
 ## Context
