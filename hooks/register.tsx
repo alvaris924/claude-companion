@@ -1,5 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type {
+  ElementTable,
   EngineInterface,
   PromptOrigin,
   Register,
@@ -26,9 +27,15 @@ import type { LastPrompt, OwnRequest, RoutedTurn, StoredSettings, Suggestion } f
 // Task routing, off by default: each prompt of the person's is graded light, standard or heavy by rules, with no model
 // call, and the turns of its task run to fit. A turn.step hook sends a light task's requests to Haiku 5.5 at low effort
 // and a heavy task's one effort level up, one model up too when picked, while the conversation is under 100,000 tokens.
-// The band says what a fitted turn ran on, with a button that asks the prompt again as usual.
+// The band says what a fitted turn ran on, with a link that asks the prompt again as usual.
 //
-// Settings: suggestions on or off, the model, its effort, how many choices, what a click does. /companion, or the ⚙ in
+// The look, after Apple's developer pages and quiet note apps: the last prompt as a quote, secondary text dimmed, the
+// choices as quiet buttons with a ↳, and a type scale for the rest. VS Code and the desktop app draw every Button in
+// their own chrome, so the choices ask for the secondary one (dark in VS Code) rather than the filled one. Colours are
+// theme keys, so a dark theme and a light one each draw it in their own; the terminal keeps one size and its row of
+// buttons.
+//
+// Settings: suggestions on or off, the model, its effort, how many choices, what a click does. /companion, or the ⋯ in
 // the band, opens a settings pane; each pick goes to this mod's own store ($.store), kept across sessions and read
 // afresh wherever a setting is used, so other open sessions take it at their next answer. (plugin.json userConfig
 // was tried: an SDK host such as VS Code lists no /config row for it, so $.config.set cannot write it there.)
@@ -48,7 +55,26 @@ const LAST_LABEL = 'Last: '
 const NEXT_LABEL = 'Next: '
 const NONE_YET = '(none yet)'
 const BUTTON_CHROME = 4 // "[ " and " ]" around a label
-const GEAR_COLUMNS = 2 // " ⚙" after the last prompt
+const MORE_COLUMNS = 2 // " ⋯" after the last prompt
+const QUOTE_COLUMNS = 2 // the quote bar before the last prompt, and the space after it
+// The look: theme keys, which every theme draws in its own colours. One accent marks what can be pressed; the quote
+// bar takes the prompt box's own border colour, so the last prompt reads as the person's words.
+const ACCENT = 'suggestion'
+const QUOTE_COLOR = 'promptBorder'
+const CHEVRON = ' ›'
+const MORE = '⋯' // opens the settings: a text glyph, where ⚙ turns into a colour emoji on some systems
+const SUGGESTED = 'Suggested'
+const MARKER = '↳' // before each choice: down then right, a reply to the answer above
+// Outside the terminal, the redo is a link at the end of a Markdown line, which the plugin answers itself. A surface
+// draws only https links as links, so it points at the documentation of what it stands for, a page worth landing on
+// should a modified click open it.
+const DOCS_URL = 'https://github.com/alvaris924/claude-companion/blob/main/docs/index.md'
+export const REDO_HREF = `${DOCS_URL}?redo=1#the-model-and-effort-for-each-task`
+const SUGGEST_NOTE = 'Written after each answer by the model above, as part of your plan’s usage.'
+const ROUTE_NOTE =
+  'Rules, not a model, read each task: a quick question can go to Haiku 5.5, and big work can think harder. ' +
+  'Only while the conversation is under 100,000 tokens.'
+const SAVED_NOTE = 'Saved for every session; other open sessions take a change at their next turn.'
 const LAST_MAX_CHARS = 160 // about two lines where the surface wraps the last prompt
 const PANE_MAX_CHARS = 600
 const CHOICE_MAX_CHARS = 200
@@ -310,6 +336,24 @@ export function settingsLine(current: Settings): string {
     `Effort: ${current.effort} · Choices: ${current.choices} · Clicking a choice: ${labelOf(PRESS_ACTIONS, current.onPress)} · ` +
     `Fit to the task: ${routing}`
   )
+}
+
+/** The suggestion settings in one line, as the mobile pane lists them: "On · Sonnet 5.5 · low effort · 3 choices". */
+export function suggestionsLine(current: Settings): string {
+  const choices = `${current.choices} ${current.choices === 1 ? 'choice' : 'choices'}`
+  return [
+    current.suggest ? 'On' : 'Off',
+    modelName(current.model),
+    `${current.effort} effort`,
+    choices,
+    labelOf(PRESS_ACTIONS, current.onPress),
+  ].join(' · ')
+}
+
+/** The routing settings in one line, as the mobile pane lists them. */
+export function routingLine(current: Settings): string {
+  if (!current.route) return 'Off'
+  return `On · light tasks: ${labelOf(LIGHT_ROUTES, current.light)} · heavy tasks: ${labelOf(HEAVY_ROUTES, current.heavy)}`
 }
 
 /** One line of at most `max` characters: whitespace runs (line breaks included) become one space. */
@@ -790,16 +834,16 @@ export async function* fittedStream(
   return yield* stream
 }
 
-/** A fitted turn in words: "Light task: Haiku 5.5 at low effort". */
+/** A fitted turn in words: "Light task · Haiku 5.5 at low effort". */
 export function describeRouted(turn: Pick<RoutedTurn, 'level' | 'model' | 'effort'>): string {
   const runsOn = turn.effort === null ? modelName(turn.model) : `${modelName(turn.model)} at ${turn.effort} effort`
-  return `${turn.level === 'light' ? 'Light' : 'Heavy'} task: ${runsOn}`
+  return `${turn.level === 'light' ? 'Light' : 'Heavy'} task · ${runsOn}`
 }
 
-/** The label of the button that asks the last prompt again as usual: on the session's model, or at its effort. */
+/** The label of the link that asks the last prompt again as usual: on the session's model, or at its effort. */
 export function redoLabel(turn: RoutedTurn): string {
-  if (turn.model !== turn.ownModel) return `Redo on ${modelName(turn.ownModel)}`
-  return turn.ownEffort === null ? 'Redo as usual' : `Redo at ${turn.ownEffort} effort`
+  if (turn.model !== turn.ownModel) return `Ask again on ${modelName(turn.ownModel)}`
+  return turn.ownEffort === null ? 'Ask again as usual' : `Ask again at ${turn.ownEffort} effort`
 }
 
 /** Asks the last prompt again on the session's own model and effort, once however often it is pressed. */
@@ -816,6 +860,76 @@ export async function redoAsUsual($: EngineInterface): Promise<void> {
   pending = { kind: 'task', level: 'standard', isNew: true }
   await recordPrompt($, prompt.text, prompt.isFromProgram)
   await $.prompt.submit({ text: prompt.text, asUser: true })
+}
+
+/** The elements the band and the panes draw with, which every surface carries. */
+type Parts = Pick<ElementTable, 'Box' | 'Button' | 'Markdown' | 'Text'>
+
+/** Text as markdown that draws it as written: every ASCII punctuation mark escaped, so nothing formats or links. */
+export function escapeMarkdown(text: string): string {
+  return text.replace(/[!-/:-@[-`{-~]/g, '\\$&')
+}
+
+/** The last prompt as a markdown quote, on one line and at most `max` characters. */
+export function quoteOf(text: string, max: number): string {
+  return `> ${escapeMarkdown(oneLine(text, max))}`
+}
+
+/**
+ * What a fitted turn ran on, quietly, and once a light one has ended, a link that asks the prompt again as usual: a
+ * dim line and a button on the terminal, one dim markdown line with its link elsewhere.
+ */
+function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, canRedo: boolean, isTerminal: boolean) {
+  const { Box, Button, Markdown, Text } = ui
+  const hasRedo = fit.level === 'light' && canRedo
+  if (!isTerminal) {
+    const redo = hasRedo ? ` · [${escapeMarkdown(redoLabel(fit))}](${REDO_HREF})` : ''
+    return (
+      <Box key="fit">
+        <Markdown
+          key="task"
+          text={`${escapeMarkdown(describeRouted(fit))}${redo}`}
+          dimColor
+          {...(hasRedo ? { pressableLinks: [REDO_HREF], onLinkPress: () => redoAsUsual($) } : {})}
+        />
+      </Box>
+    )
+  }
+  return (
+    <Box key="fit" flexWrap="wrap" columnGap={2}>
+      <Box key="task" flexShrink={1}>
+        <Text dimColor wrap="truncate-end">
+          {describeRouted(fit)}
+        </Text>
+      </Box>
+      {hasRedo && (
+        <Button key="redo" label={redoLabel(fit)} plain onPress={() => redoAsUsual($)}>
+          <Text color={ACCENT}>{`${redoLabel(fit)}${CHEVRON}`}</Text>
+        </Button>
+      )}
+    </Box>
+  )
+}
+
+/**
+ * The choices where the surface lays text out itself: a small "Suggested" label over one quiet button per choice, a ↳
+ * and the choice. `dimColor` asks for the surface's secondary button, the dark one VS Code draws for the ⋯, rather
+ * than its filled one; the choice is a Text child so it wraps inside its button.
+ */
+function choiceList($: EngineInterface, ui: Parts, choices: readonly string[]) {
+  const { Box, Button, Text } = ui
+  return (
+    <Box key="choices" flexDirection="column" rowGap="xs">
+      <Text size="caption" weight="semibold" dimColor>
+        {SUGGESTED}
+      </Text>
+      {choices.map((choice, i) => (
+        <Button key={`choice-${i + 1}`} label={choice} plain dimColor onPress={() => pressChoice($, choice, choices)}>
+          <Text color="text">{`${MARKER} ${choice}`}</Text>
+        </Button>
+      ))}
+    </Box>
+  )
 }
 
 export const register: Register = on => {
@@ -977,39 +1091,32 @@ export const register: Register = on => {
     const fit = await read($, routed)
     if (e.props.hasSurvey || (prompt === null && idea === null && fit === null)) return next(e)
 
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Button, Markdown, Text } = ui
     // The terminal's columns are exact, so its lines are cut to fit. VS Code and the apps lay text out in their own
     // font, where the columns they report undercount the room (VS Code 2.1.300 said 42 for a band twice that wide),
-    // so there the texts go whole and wrap; a choice wraps inside its button (a Text child, a label never wraps).
+    // so there the texts go whole and wrap, as markdown: the last prompt a quote, the choices rows of links.
     const isTerminal = e.surface === 'terminal'
-    const lastRoom = isTerminal ? Math.max(10, e.props.bodyColumns - LAST_LABEL.length - GEAR_COLUMNS) : LAST_MAX_CHARS
+    const lastRoom = isTerminal ? Math.max(10, e.props.bodyColumns - QUOTE_COLUMNS - MORE_COLUMNS) : LAST_MAX_CHARS
     const choiceRoom = Math.max(10, e.props.bodyColumns - NEXT_LABEL.length - BUTTON_CHROME)
 
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" rowGap="xs">
         {prompt !== null && (
           <Box flexWrap="nowrap" columnGap={1}>
-            <Box flexWrap="nowrap" flexGrow={1} flexShrink={1}>
-              <Text dimColor>{LAST_LABEL}</Text>
-              <Box key="prompt" flexShrink={1}>
-                <Text wrap={isTerminal ? 'truncate-end' : 'wrap'}>{oneLine(prompt.text, lastRoom)}</Text>
+            {isTerminal ? (
+              <Box key="prompt" flexGrow={1} flexShrink={1} borderStyle="quote" borderColor={QUOTE_COLOR} paddingLeft={1}>
+                <Text wrap="truncate-end">{oneLine(prompt.text, lastRoom)}</Text>
               </Box>
-            </Box>
-            <Button key="settings" label="⚙" plain dimColor onPress={() => openSettings($)} />
-          </Box>
-        )}
-        {fit !== null && (
-          <Box key="fit" flexWrap="wrap" columnGap={1}>
-            <Box key="task" flexShrink={1}>
-              <Text dimColor wrap={isTerminal ? 'truncate-end' : 'wrap'}>
-                {describeRouted(fit)}
-              </Text>
-            </Box>
-            {fit.level === 'light' && !e.props.isWorking && prompt !== null && (
-              <Button key="redo" label={redoLabel(fit)} dimColor onPress={() => redoAsUsual($)} />
+            ) : (
+              <Box key="prompt" flexGrow={1} flexShrink={1}>
+                <Markdown text={quoteOf(prompt.text, lastRoom)} />
+              </Box>
             )}
+            <Button key="settings" label={MORE} plain dimColor onPress={() => openSettings($)} />
           </Box>
         )}
+        {fit !== null && fitRow($, ui, fit, !e.props.isWorking && prompt !== null, isTerminal)}
         {idea !== null && isTerminal && (
           <Box>
             <Text dimColor>{NEXT_LABEL}</Text>
@@ -1025,16 +1132,7 @@ export const register: Register = on => {
             </Box>
           </Box>
         )}
-        {idea !== null && !isTerminal && (
-          <Box key="choices" flexDirection="column">
-            <Text dimColor>{NEXT_LABEL.trim()}</Text>
-            {idea.choices.map((choice, i) => (
-              <Button key={`choice-${i + 1}`} variant={i === 0 ? 'primary' : undefined} onPress={() => pressChoice($, choice, idea.choices)}>
-                <Text>{choice}</Text>
-              </Button>
-            ))}
-          </Box>
-        )}
+        {idea !== null && !isTerminal && choiceList($, ui, idea.choices)}
       </Box>
     )
   })
@@ -1043,50 +1141,43 @@ export const register: Register = on => {
     const prompt = await read($, last)
     const idea = await read($, suggested)
     const fit = await read($, routed)
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Button, Markdown, Text } = ui
     // As in the band: cut to the terminal's exact columns, whole and wrapping everywhere else.
     const isTerminal = e.surface === 'terminal'
     const choiceRoom = Math.max(10, e.props.bodyColumns - BUTTON_CHROME)
 
     return (
-      <Box flexDirection="column">
-        {prompt === null ? (
-          <Text dimColor>No prompt yet.</Text>
-        ) : (
-          <Box flexWrap="nowrap">
-            <Text dimColor>{LAST_LABEL}</Text>
-            <Box key="prompt" flexShrink={1}>
+      <Box flexDirection="column" rowGap="sm">
+        <Box key="last" flexDirection="column">
+          <Text size="caption" weight="semibold" dimColor>
+            Last prompt
+          </Text>
+          {prompt === null && <Text dimColor>No prompt yet.</Text>}
+          {prompt !== null && isTerminal && (
+            <Box key="prompt" borderStyle="quote" borderColor={QUOTE_COLOR} paddingLeft={1}>
               <Text>{oneLine(prompt.text, PANE_MAX_CHARS)}</Text>
             </Box>
-          </Box>
-        )}
-        {fit !== null && (
-          <Box key="fit" flexWrap="wrap" columnGap={1}>
-            <Box key="task" flexShrink={1}>
-              <Text dimColor>{describeRouted(fit)}</Text>
+          )}
+          {prompt !== null && !isTerminal && (
+            <Box key="prompt">
+              <Markdown text={quoteOf(prompt.text, PANE_MAX_CHARS)} />
             </Box>
-            {fit.level === 'light' && prompt !== null && (
-              <Button key="redo" label={redoLabel(fit)} dimColor onPress={() => redoAsUsual($)} />
-            )}
-          </Box>
-        )}
-        {idea !== null && (
+          )}
+        </Box>
+        {fit !== null && fitRow($, ui, fit, prompt !== null, isTerminal)}
+        {idea !== null && !isTerminal && choiceList($, ui, idea.choices)}
+        {idea !== null && isTerminal && (
           <Box key="choices" flexDirection="column">
             <Text dimColor>{NEXT_LABEL.trim()}</Text>
-            {idea.choices.map((choice, i) =>
-              isTerminal ? (
-                <Button
-                  key={`choice-${i + 1}`}
-                  label={oneLine(choice, choiceRoom)}
-                  variant={i === 0 ? 'primary' : undefined}
-                  onPress={() => pressChoice($, choice, idea.choices)}
-                />
-              ) : (
-                <Button key={`choice-${i + 1}`} variant={i === 0 ? 'primary' : undefined} onPress={() => pressChoice($, choice, idea.choices)}>
-                  <Text>{choice}</Text>
-                </Button>
-              ),
-            )}
+            {idea.choices.map((choice, i) => (
+              <Button
+                key={`choice-${i + 1}`}
+                label={oneLine(choice, choiceRoom)}
+                variant={i === 0 ? 'primary' : undefined}
+                onPress={() => pressChoice($, choice, idea.choices)}
+              />
+            ))}
           </Box>
         )}
       </Box>
@@ -1099,66 +1190,106 @@ export const register: Register = on => {
     const current = drawn !== null ? settingsFrom(drawn) : ((await readSettings($)) ?? settings)
     const note = heavyNote(current.heavy, await read($, own))
     if (e.surface === 'mobile') {
-      // The mobile app draws no picker: the settings as text, changed from a computer.
+      // The mobile app draws no picker: the settings as text, in the same groups, changed from a computer.
       const { Box, Text } = $.ui.resolve(e)
       return (
-        <Box flexDirection="column">
-          <Box key="summary">
-            <Text>{settingsLine(current)}</Text>
-          </Box>
-          {note !== null && (
-            <Box key="heavyNote">
-              <Text dimColor>{note}</Text>
+        <Box flexDirection="column" rowGap="md">
+          <Box key="suggestions" flexDirection="column">
+            <Text size="footnote" weight="semibold" dimColor>
+              Suggested next messages
+            </Text>
+            <Box key="summary">
+              <Text>{suggestionsLine(current)}</Text>
             </Box>
-          )}
-          <Text dimColor>Change them from VS Code or the terminal: /companion.</Text>
+          </Box>
+          <Box key="routing" flexDirection="column">
+            <Text size="footnote" weight="semibold" dimColor>
+              Model and effort for each task
+            </Text>
+            <Box key="routeSummary">
+              <Text>{routingLine(current)}</Text>
+            </Box>
+            {note !== null && (
+              <Box key="heavyNote">
+                <Text size="footnote" dimColor>
+                  {note}
+                </Text>
+              </Box>
+            )}
+          </Box>
+          <Text size="footnote" dimColor>
+            Change them on a computer: /companion in VS Code or the terminal.
+          </Text>
         </Box>
       )
     }
 
+    // Grouped as a settings app groups them: a small heading, the pickers in a rounded card, a footnote under it.
     const { Box, Select, Text } = $.ui.resolve(e)
     return (
-      <Box flexDirection="column">
-        <Text dimColor>Suggested next messages</Text>
-        <Select
-          key="suggest"
-          label="Suggest next messages"
-          value={current.suggest ? 'on' : 'off'}
-          options={ON_OFF}
-          onSelect={value => changeSetting($, 'suggest', value === 'on')}
-        />
-        <Select key="model" label="Model" value={current.model} options={MODELS} onSelect={value => changeSetting($, 'model', value)} />
-        <Select key="effort" label="Thinking effort" value={current.effort} options={EFFORTS} onSelect={value => changeSetting($, 'effort', value)} />
-        <Select
-          key="choices"
-          label="Number of choices"
-          value={String(current.choices)}
-          options={CHOICE_COUNTS}
-          onSelect={value => changeSetting($, 'choices', value)}
-        />
-        <Select
-          key="onPress"
-          label="Clicking a choice"
-          value={current.onPress}
-          options={PRESS_ACTIONS}
-          onSelect={value => changeSetting($, 'onPress', value)}
-        />
-        <Text dimColor>Model and effort for each task</Text>
-        <Select
-          key="route"
-          label="Fit model and effort to each task"
-          value={current.route ? 'on' : 'off'}
-          options={ON_OFF}
-          onSelect={value => changeSetting($, 'route', value === 'on')}
-        />
-        <Select key="light" label="Light tasks" value={current.light} options={LIGHT_ROUTES} onSelect={value => changeSetting($, 'light', value)} />
-        <Select key="heavy" label="Heavy tasks" value={current.heavy} options={HEAVY_ROUTES} onSelect={value => changeSetting($, 'heavy', value)} />
-        {note !== null && (
-          <Box key="heavyNote">
-            <Text dimColor>{note}</Text>
+      <Box flexDirection="column" rowGap="md">
+        <Box key="suggestions" flexDirection="column">
+          <Text size="footnote" weight="semibold" dimColor>
+            Suggested next messages
+          </Text>
+          <Box key="suggestCard" flexDirection="column" borderStyle="round" borderColor={QUOTE_COLOR} paddingX="sm">
+            <Select
+              key="suggest"
+              label="Suggest next messages"
+              value={current.suggest ? 'on' : 'off'}
+              options={ON_OFF}
+              onSelect={value => changeSetting($, 'suggest', value === 'on')}
+            />
+            <Select key="model" label="Model" value={current.model} options={MODELS} onSelect={value => changeSetting($, 'model', value)} />
+            <Select key="effort" label="Thinking effort" value={current.effort} options={EFFORTS} onSelect={value => changeSetting($, 'effort', value)} />
+            <Select
+              key="choices"
+              label="Number of choices"
+              value={String(current.choices)}
+              options={CHOICE_COUNTS}
+              onSelect={value => changeSetting($, 'choices', value)}
+            />
+            <Select
+              key="onPress"
+              label="Clicking a choice"
+              value={current.onPress}
+              options={PRESS_ACTIONS}
+              onSelect={value => changeSetting($, 'onPress', value)}
+            />
           </Box>
-        )}
-        <Text dimColor>Saved for every session; other open sessions take a change at their next turn.</Text>
+          <Text size="footnote" dimColor>
+            {SUGGEST_NOTE}
+          </Text>
+        </Box>
+        <Box key="routing" flexDirection="column">
+          <Text size="footnote" weight="semibold" dimColor>
+            Model and effort for each task
+          </Text>
+          <Box key="routeCard" flexDirection="column" borderStyle="round" borderColor={QUOTE_COLOR} paddingX="sm">
+            <Select
+              key="route"
+              label="Fit model and effort to each task"
+              value={current.route ? 'on' : 'off'}
+              options={ON_OFF}
+              onSelect={value => changeSetting($, 'route', value === 'on')}
+            />
+            <Select key="light" label="Light tasks" value={current.light} options={LIGHT_ROUTES} onSelect={value => changeSetting($, 'light', value)} />
+            <Select key="heavy" label="Heavy tasks" value={current.heavy} options={HEAVY_ROUTES} onSelect={value => changeSetting($, 'heavy', value)} />
+          </Box>
+          {note !== null && (
+            <Box key="heavyNote">
+              <Text size="footnote" dimColor>
+                {note}
+              </Text>
+            </Box>
+          )}
+          <Text size="footnote" dimColor>
+            {ROUTE_NOTE}
+          </Text>
+        </Box>
+        <Text size="footnote" dimColor>
+          {SAVED_NOTE}
+        </Text>
       </Box>
     )
   })

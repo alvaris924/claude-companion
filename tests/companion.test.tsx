@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 import type { ModelUsage, On, RenderSurface, TurnStepInput } from 'claude-code'
 
-import { gradeTask, isOrder, nextLevel } from '../hooks/register'
+import { REDO_HREF, gradeTask, isOrder, nextLevel } from '../hooks/register'
 
 const PLUGIN = 'companion'
 const PANE = 'last-prompt'
@@ -161,14 +161,42 @@ async function typed($: Engine, text: string): Promise<void> {
   await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
 }
 
-/** The texts of the choices a mounted band or pane draws, in order: a terminal Button's label, elsewhere its Text. */
-async function choicesDrawn(mounted: { find: (query: { key: string }) => Promise<Found | undefined> }): Promise<string[]> {
+/** A mounted band or pane, as the helpers below read and press it. */
+type Drawn = {
+  find: (query: { key: string }) => Promise<Found | undefined>
+  press: (target: { key: string; link?: { href: string } }) => Promise<unknown>
+}
+
+/** Markdown the plugin wrote, as a person reads it: no quote mark, links as their text, escapes undone. */
+function plainOf(markdown: string): string {
+  return markdown
+    .replace(/^> /, '')
+    .replace(/\[((?:\\.|[^\]\\])*)\]\([^)]*\)/g, '$1')
+    .replace(/\\(.)/g, '$1')
+}
+
+/** The last prompt a mounted band or pane shows: the terminal's Text, elsewhere a markdown quote. */
+async function promptShown(mounted: Drawn): Promise<string | undefined> {
+  const found = await mounted.find({ key: 'prompt' })
+  return found === undefined ? undefined : plainOf(found.text)
+}
+
+/**
+ * The choices a mounted band or pane offers, in order: each Button's label, which names it on every surface (the
+ * terminal draws it cut to fit; elsewhere it is the whole choice, drawn as a Text child after a ↳).
+ */
+async function choicesDrawn(mounted: Drawn): Promise<string[]> {
   const texts: string[] = []
   for (const key of ['choice-1', 'choice-2', 'choice-3', 'choice-4', 'choice-5']) {
     const found = await mounted.find({ key })
-    if (found !== undefined) texts.push(found.text.length > 0 ? found.text : String(found.props.label ?? ''))
+    if (found !== undefined) texts.push(typeof found.props.label === 'string' ? found.props.label : found.text)
   }
   return texts
+}
+
+/** Presses the button of the choice numbered `n`, from 1. */
+async function pressChoiceIn(mounted: Drawn, n: number): Promise<void> {
+  await mounted.press({ key: `choice-${n}` })
 }
 
 describe('companion', () => {
@@ -183,7 +211,7 @@ describe('companion', () => {
 
     for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
       const band = await $.ui.mount({ ...BAND, surface })
-      expect((await band.find({ key: 'prompt' }))?.text).toBe('rename the config loader please')
+      expect(await promptShown(band)).toBe('rename the config loader please')
       await band.unmount()
     }
   })
@@ -197,18 +225,18 @@ describe('companion', () => {
     await $.prompt.submit({ text: '   ', wait: false, origin: { kind: 'composer' } })
 
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.find({ key: 'prompt' }))?.text).toBe('my real prompt')
+    expect(await promptShown(band)).toBe('my real prompt')
     await band.unmount()
   })
 
-  test('a long prompt is cut to the band width, room left for the ⚙', async ($, on) => {
+  test('a long prompt is cut to the band width, room left for the quote bar and the ⋯', async ($, on) => {
     engine(on, ['terminal'])
 
     await $.prompt.submit({ text: 'x'.repeat(500), wait: false, origin: { kind: 'composer' } })
 
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    const text = (await band.find({ key: 'prompt' }))?.text ?? ''
-    expect(text.length).toBe(80 - 'Last: '.length - 2)
+    const text = await promptShown(band) ?? ''
+    expect(text.length).toBe(80 - 2 - 2) // "│ " before it, " ⋯" after it
     expect(text.endsWith('…')).toBe(true)
     await band.unmount()
   })
@@ -220,11 +248,11 @@ describe('companion', () => {
     expect(world.opened).toEqual([PANE])
 
     const pane = await $.ui.mount({ ...PANE_MOUNT, surface: 'mobile' })
-    expect((await pane.find({ key: 'prompt' }))?.text).toBe('first prompt')
+    expect(await promptShown(pane)).toBe('first prompt')
 
     await $.prompt.submit({ text: 'second prompt', wait: false, origin: { kind: 'unclassified' } })
     await pane.redraw()
-    expect((await pane.find({ key: 'prompt' }))?.text).toBe('second prompt')
+    expect(await promptShown(pane)).toBe('second prompt')
     await pane.unmount()
 
     const ran = await $.command.run({ command: 'last-prompt', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
@@ -255,7 +283,7 @@ describe('companion', () => {
     expect(world.filled).toEqual([])
 
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.find({ key: 'prompt' }))?.text).toBe('merge the parser work')
+    expect(await promptShown(band)).toBe('merge the parser work')
     expect(await choicesDrawn(band)).toEqual([...CHOICES])
     expect((await band.find({ key: 'choice-1' }))?.props.variant).toBe('primary')
     expect((await band.find({ key: 'choice-2' }))?.props.variant).toBeUndefined()
@@ -343,12 +371,57 @@ describe('companion', () => {
 
     expect(world.requests).toEqual([])
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
-    expect((await band.find({ key: 'prompt' }))?.text).toBe('merge the parser work')
+    expect(await promptShown(band)).toBe('merge the parser work')
     expect(await choicesDrawn(band)).toEqual([])
     await band.unmount()
   })
 
-  test('/companion opens the settings pane, and so does the ⚙ in the band', async ($, on) => {
+  test('the look: the last prompt as a quote, the choices as quiet buttons, the settings in rounded cards', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false })
+
+    await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    // Outside the terminal: a markdown quote, a small label, and one dim (secondary) button per choice, a ↳ before it.
+    for (const surface of ['vscode', 'desktop'] as const) {
+      const band = await $.ui.mount({ ...BAND, surface })
+      expect((await band.find({ key: 'prompt' }))?.text).toBe('> merge the parser work')
+      expect((await band.find({ key: 'settings' }))?.props.label).toBe('⋯')
+      expect((await band.find({ type: 'Text', text: 'Suggested' }))?.props).toMatchObject({ size: 'caption', dimColor: true })
+      for (const [i, choice] of CHOICES.entries()) {
+        const button = await band.find({ key: `choice-${i + 1}` })
+        expect(button?.props).toMatchObject({ label: choice, plain: true, dimColor: true })
+        expect(button?.text).toBe(`↳ ${choice}`)
+      }
+      await band.unmount()
+    }
+    // The terminal keeps its quote bar and its row of buttons.
+    const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await terminal.find({ key: 'prompt' }))?.props).toMatchObject({ borderStyle: 'quote', borderColor: 'promptBorder' })
+    expect((await terminal.find({ key: 'choice-1' }))?.props).toMatchObject({ variant: 'primary', label: CHOICES[0] })
+    await terminal.unmount()
+
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    for (const key of ['suggestCard', 'routeCard']) expect((await pane.find({ key }))?.props.borderStyle).toBe('round')
+    await pane.unmount()
+  })
+
+  test('a prompt full of markdown is drawn as typed: nothing in it formats or links', async ($, on) => {
+    engine(on, ['vscode'], { showsSuggestions: false })
+    const typed = '**bold** _it_ [a link](https://example.com) `code` # not a heading > nor a quote | 1. 2.'
+
+    await $.prompt.submit({ text: typed, wait: false, origin: { kind: 'composer' } })
+
+    const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    const quoted = (await band.find({ key: 'prompt' }))?.text ?? ''
+    expect(quoted.startsWith('> ')).toBe(true)
+    expect(/(^|[^\\])[*_[\]()`#>|.]/.test(quoted.slice(2))).toBe(false) // every mark escaped
+    expect(plainOf(quoted)).toBe(typed)
+    await band.unmount()
+  })
+
+  test('/companion opens the settings pane, and so does the ⋯ in the band', async ($, on) => {
     const world = engine(on, ['vscode'], { showsSuggestions: false })
 
     const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
@@ -403,7 +476,7 @@ describe('companion', () => {
     engine(on, ['mobile'])
 
     const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'mobile' })
-    expect((await pane.find({ key: 'summary' }))?.text).toContain('Model: Sonnet 5.5')
+    expect((await pane.find({ key: 'summary' }))?.text).toContain('Sonnet 5.5')
     await pane.unmount()
   })
 
@@ -446,7 +519,7 @@ describe('companion', () => {
 
     const band = await $.ui.mount({ ...narrow, surface: 'vscode' })
     expect(await choicesDrawn(band)).toEqual(long)
-    expect((await band.find({ key: 'prompt' }))?.text).toBe(typed)
+    expect(await promptShown(band)).toBe(typed)
     await band.unmount()
   })
 
@@ -476,7 +549,7 @@ describe('companion', () => {
     await world.clock.advance(1)
 
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
-    expect((await band.find({ key: 'prompt' }))?.text).toBe('looks great but not showing full messages [image] check again')
+    expect(await promptShown(band)).toBe('looks great but not showing full messages [image] check again')
     await band.unmount()
     expect(world.requests[0]?.prompt).toContain('looks great but not showing full messages')
     expect(world.requests[0]?.prompt).not.toContain('browser_instruction')
@@ -484,7 +557,7 @@ describe('companion', () => {
     // A prompt that is nothing but such a block is no prompt of the person's.
     await $.prompt.submit({ text: '<system-reminder>a reminder</system-reminder>', wait: false, origin: { kind: 'composer' } })
     const after = await $.ui.mount({ ...BAND, surface: 'vscode' })
-    expect((await after.find({ key: 'prompt' }))?.text).toBe('looks great but not showing full messages [image] check again')
+    expect(await promptShown(after)).toBe('looks great but not showing full messages [image] check again')
     await after.unmount()
   })
 
@@ -496,11 +569,11 @@ describe('companion', () => {
     await world.clock.advance(1)
 
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
-    await band.press({ key: 'choice-2' })
+    await pressChoiceIn(band, 2)
     expect(world.submitted).toEqual(['merge the parser work', CHOICES[1]])
 
     await band.redraw()
-    expect((await band.find({ key: 'prompt' }))?.text).toBe(CHOICES[1])
+    expect(await promptShown(band)).toBe(CHOICES[1])
     expect(await choicesDrawn(band)).toEqual([])
     await band.unmount()
   })
@@ -513,20 +586,20 @@ describe('companion', () => {
     await world.clock.advance(1)
 
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
-    await band.press({ key: 'choice-2' })
+    await pressChoiceIn(band, 2)
     expect(world.box).toBe(CHOICES[1])
-    await band.press({ key: 'choice-1' })
+    await pressChoiceIn(band, 1)
     expect(world.box).toBe(CHOICES[0]) // an earlier choice is replaced
 
     world.box = 'and then'
-    await band.press({ key: 'choice-3' })
+    await pressChoiceIn(band, 3)
     expect(world.box).toBe(`and then ${CHOICES[2]}`) // what the person typed stays
     await band.unmount()
 
     expect(world.submitted).toEqual(['merge the parser work']) // nothing was sent
   })
 
-  test('in the mobile pane the choices are buttons, and pressing one sends it', async ($, on) => {
+  test('in the mobile pane the choices are links, and pressing one sends it', async ($, on) => {
     const world = engine(on, ['mobile'])
 
     await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'bridge' } })
@@ -536,7 +609,7 @@ describe('companion', () => {
     const pane = await $.ui.mount({ ...PANE_MOUNT, surface: 'mobile' })
     expect(await choicesDrawn(pane)).toEqual([...CHOICES])
 
-    await pane.press({ key: 'choice-3' })
+    await pressChoiceIn(pane, 3)
     expect(world.submitted).toEqual(['merge the parser work', CHOICES[2]])
     await pane.unmount()
   })
@@ -730,10 +803,16 @@ describe('task routing', () => {
     await runTurn($, 't1', QUESTION, SONNET_HIGH, 2)
 
     expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW])
-    for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
+    const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await terminal.find({ key: 'task' }))?.text).toBe('Light task · Haiku 5.5 at low effort')
+    expect((await terminal.find({ key: 'redo' }))?.props.label).toBe('Ask again on Sonnet 5.5')
+    await terminal.unmount()
+    // Elsewhere one markdown line: what the turn ran on, then the redo as a link the plugin answers.
+    for (const surface of ['desktop', 'vscode'] as const) {
       const band = await $.ui.mount({ ...BAND, surface })
-      expect((await band.find({ key: 'task' }))?.text).toBe('Light task: Haiku 5.5 at low effort')
-      expect((await band.find({ key: 'redo' }))?.props.label).toBe('Redo on Sonnet 5.5')
+      const task = await band.find({ key: 'task' })
+      expect(plainOf(task?.text ?? '')).toBe('Light task · Haiku 5.5 at low effort · Ask again on Sonnet 5.5')
+      expect(task?.props.pressableLinks).toEqual([REDO_HREF])
       await band.unmount()
     }
   })
@@ -745,13 +824,14 @@ describe('task routing', () => {
     await $.turn.start({ text: QUESTION, turnId: 't1' })
     await step($, { turnId: 't1', index: 0, messageCount: 1, ...SONNET_HIGH })
     const working = await $.ui.mount({ ...BAND, surface: 'vscode', props: { ...BAND.props, isWorking: true } })
-    expect((await working.find({ key: 'task' }))?.text).toBe('Light task: Haiku 5.5 at low effort')
-    expect(await working.find({ key: 'redo' })).toBeUndefined()
+    const busy = await working.find({ key: 'task' })
+    expect(plainOf(busy?.text ?? '')).toBe('Light task · Haiku 5.5 at low effort')
+    expect(busy?.props.pressableLinks).toBeUndefined()
     await working.unmount()
     await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
 
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
-    await band.press({ key: 'redo' })
+    await band.press({ key: 'task', link: { href: REDO_HREF } })
     expect(world.submitted).toEqual([QUESTION, QUESTION])
     await runTurn($, 't2', QUESTION, SONNET_HIGH)
     expect(world.steps).toEqual([HAIKU_LOW, SONNET_HIGH])
@@ -768,7 +848,7 @@ describe('task routing', () => {
     await typed($, heavy)
     await runTurn($, 't1', heavy, SONNET_HIGH)
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.find({ key: 'task' }))?.text).toBe('Heavy task: Sonnet 5.5 at xhigh effort')
+    expect((await band.find({ key: 'task' }))?.text).toBe('Heavy task · Sonnet 5.5 at xhigh effort')
     expect(await band.find({ key: 'redo' })).toBeUndefined()
     await band.unmount()
 
@@ -850,10 +930,10 @@ describe('task routing', () => {
 
     await typed($, QUESTION)
     await runTurn($, 't1', QUESTION, SONNET_HIGH)
-    for (const [turnId, key, text] of [['t2', 'choice-2', CHOICES[1]], ['t3', 'choice-1', CHOICES[0]]] as const) {
+    for (const [turnId, n, text] of [['t2', 2, CHOICES[1]], ['t3', 1, CHOICES[0]]] as const) {
       await world.clock.advance(1)
       const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
-      await band.press({ key })
+      await pressChoiceIn(band, n)
       await band.unmount()
       await runTurn($, turnId, text, SONNET_HIGH)
     }
@@ -870,7 +950,7 @@ describe('task routing', () => {
     await runTurn($, 't1', heavy, SONNET_HIGH)
     await world.clock.advance(1)
     const band = await $.ui.mount({ ...BAND, surface: 'vscode' })
-    await band.press({ key: 'choice-1' })
+    await pressChoiceIn(band, 1)
     await band.unmount()
     await runTurn($, 't2', CHOICES[0], SONNET_HIGH)
 
@@ -955,7 +1035,7 @@ describe('task routing', () => {
     await typed($, QUESTION)
     const done = await runTurn($, 't1', QUESTION, SONNET_HIGH)
 
-    expect(done.text).toBe(`Light task: Haiku 5.5 at low effort\n${ALL_THREE}`)
+    expect(done.text).toBe(`Light task · Haiku 5.5 at low effort\n${ALL_THREE}`)
   })
 
   test('in the mobile pane a fitted turn shows with its redo', async ($, on) => {
@@ -965,8 +1045,8 @@ describe('task routing', () => {
     await runTurn($, 't1', QUESTION, SONNET_HIGH)
 
     const pane = await $.ui.mount({ ...PANE_MOUNT, surface: 'mobile' })
-    expect((await pane.find({ key: 'task' }))?.text).toBe('Light task: Haiku 5.5 at low effort')
-    await pane.press({ key: 'redo' })
+    expect(plainOf((await pane.find({ key: 'task' }))?.text ?? '')).toBe('Light task · Haiku 5.5 at low effort · Ask again on Sonnet 5.5')
+    await pane.press({ key: 'task', link: { href: REDO_HREF } })
     expect(world.submitted).toEqual([QUESTION, QUESTION])
     await pane.unmount()
   })
