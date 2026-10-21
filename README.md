@@ -1,10 +1,12 @@
 # Companion
 
-A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click. See it in motion at [claudecompanion.vercel.app](https://claudecompanion.vercel.app).
+A mod for Claude Code that adds small, useful features where you work, and is built to keep taking more. It starts with your last prompt in view, next messages you can click, and the right model for each task. See it in motion at [claudecompanion.vercel.app](https://claudecompanion.vercel.app).
 
 > **Status: v0.10.1.** What comes next is in the [milestones](https://github.com/alvaris924/claude-companion/milestones).
 
-## What it does
+## Features so far
+
+Companion is a home for helpers inside Claude Code, and these are the first ones. Each release adds more, listed in the [changelog](CHANGELOG.md).
 
 - **Your last prompt stays in view.** A band directly above the prompt box shows what you last asked while the answer scrolls by. Blocks a host wraps around your words, such as a browser extension's instructions, are left out, and a pasted image shows as `[image]`.
 - **Suggested next messages.** After each answer, a model reads your last prompt and the end of the answer and offers the messages you are likeliest to send next: three by default, one to five if you prefer. Click one to send it as your own message, or set a click to put it in the prompt box to edit first. In the terminal the likeliest also appears dim in the prompt box, and Tab takes it.
