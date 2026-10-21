@@ -205,6 +205,8 @@ type Settings = {
   easy: string
   mid: string
   hard: string
+  /** The conversation size, in tokens, past which only hard tasks switch; NO_LIMIT for none. */
+  limit: string
 }
 
 const MODELS: readonly SelectOption[] = [
@@ -244,6 +246,14 @@ const TIER_ROUTES: readonly SelectOption[] = [
 ]
 // Haiku, Sonnet and Opus at a rising effort, picked 2026-10-21.
 const DEFAULT_ROUTES = { easy: 'claude-haiku-5-5:low', mid: 'claude-sonnet-5-5:medium', hard: 'claude-opus-5-5:max' } as const
+// Past this size of conversation only hard tasks switch, since each switch reads the conversation once uncached.
+const NO_LIMIT = 'none'
+const LIMITS: readonly SelectOption[] = [
+  { value: NO_LIMIT, label: 'No limit' },
+  { value: '100000', label: '100,000 tokens' },
+  { value: '200000', label: '200,000 tokens' },
+  { value: '400000', label: '400,000 tokens' },
+]
 // A grade as the band names it.
 const GRADE_NAMES = { easy: 'Easy', mid: 'Mid', hard: 'Hard' } as const
 
@@ -289,7 +299,7 @@ export type ToGrade = { prompt: string; before: string; reply: string }
  */
 type Task = { level: TaskLevel; toGrade?: ToGrade; asUsual?: boolean }
 /** What the settings give each grade. */
-type Routes = Pick<Settings, 'easy' | 'mid' | 'hard'>
+type Routes = Pick<Settings, 'easy' | 'mid' | 'hard' | 'limit'>
 /** The model and effort a fitted turn's requests go with, beside the session's own that its first request named. */
 type Plan = {
   level: TaskLevel
@@ -297,6 +307,8 @@ type Plan = {
   effort: TurnStepInput['effort']
   ownModel: string
   ownEffort: TurnStepInput['effort']
+  /** Whether the conversation was past the limit, so the grade's pick was left unused. */
+  isKept: boolean
 }
 /** A main-loop turn the settings fit: its task, the routes, and its plan once its first request decided one. */
 type FittedTurn = { task: Task; routes: Routes; plan?: Plan | null }
@@ -335,6 +347,7 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
     easy: pick(stored.easy, TIER_ROUTES, DEFAULT_ROUTES.easy),
     mid: pick(stored.mid, TIER_ROUTES, DEFAULT_ROUTES.mid),
     hard: pick(stored.hard, TIER_ROUTES, DEFAULT_ROUTES.hard),
+    limit: pick(stored.limit, LIMITS, NO_LIMIT),
   }
 }
 
@@ -366,6 +379,11 @@ export function labelOf(options: readonly SelectOption[], value: string): string
   return options.find(option => option.value === value)?.label ?? value
 }
 
+/** The limit in words: "switching at any length", or "easy and mid tasks switch up to 200,000 tokens". */
+export function limitLine(current: Pick<Settings, 'limit'>): string {
+  return current.limit === NO_LIMIT ? 'switching at any length' : `easy and mid tasks switch up to ${labelOf(LIMITS, current.limit)}`
+}
+
 /** Each grade's pick in words: "easy tasks: Haiku 5.5 at low effort". */
 export function tiersOf(current: Routes): string[] {
   return (['easy', 'mid', 'hard'] as const).map(level => `${level} tasks: ${labelOf(TIER_ROUTES, current[level])}`)
@@ -373,7 +391,7 @@ export function tiersOf(current: Routes): string[] {
 
 /** The settings on one line of plain text, for a host that draws no pane. */
 export function settingsLine(current: Settings): string {
-  const routing = current.route ? `on (${tiersOf(current).join('; ')})` : 'off'
+  const routing = current.route ? `on (${[...tiersOf(current), limitLine(current)].join('; ')})` : 'off'
   return (
     `Suggestions: ${current.suggest ? 'on' : 'off'} · Model: ${labelOf(MODELS, current.model)} · ` +
     `Effort: ${current.effort} · Choices: ${current.choices} · Clicking a choice: ${labelOf(PRESS_ACTIONS, current.onPress)} · ` +
@@ -395,7 +413,7 @@ export function suggestionsLine(current: Settings): string {
 
 /** The routing settings in one line, as the mobile pane lists them. */
 export function routingLine(current: Settings): string {
-  return current.route ? ['On', ...tiersOf(current)].join(' · ') : 'Off'
+  return current.route ? ['On', ...tiersOf(current), limitLine(current)].join(' · ') : 'Off'
 }
 
 /** One line of at most `max` characters: whitespace runs (line breaks included) become one space. */
@@ -812,8 +830,20 @@ export async function planTurn($: EngineInterface, turn: FittedTurn, e: TurnStep
     task.level = graded ?? task.level
     delete task.toGrade
   }
-  const route = task.asUsual ? null : routeFor(task.level, turn.routes, e)
-  return { level: task.level, model: route?.model ?? e.model, effort: route?.effort ?? e.effort, ownModel: e.model, ownEffort: e.effort }
+  // Past the limit only a hard task is worth the uncached read a switch costs.
+  const limit = Number(turn.routes.limit)
+  const isKept = !task.asUsual && task.level !== 'hard' && Number.isFinite(limit) && (await contextTokens($)) >= limit
+  const route = task.asUsual || isKept ? null : routeFor(task.level, turn.routes, e)
+  return { level: task.level, model: route?.model ?? e.model, effort: route?.effort ?? e.effort, ownModel: e.model, ownEffort: e.effort, isKept }
+}
+
+/** The session's context fill in tokens: 0 before the first reading, unbounded where it cannot be read. */
+export async function contextTokens($: EngineInterface): Promise<number> {
+  try {
+    return (await $.session.usage()).context.tokens ?? 0
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
 }
 
 /** Whether a fitted turn runs on another model or effort than the session's own. */
@@ -824,7 +854,7 @@ export function isMoved(turn: { model: string; effort: unknown; ownModel: string
 /** A plan as the band keeps it. */
 export function routedOf(plan: Plan, at: number): RoutedTurn {
   const named = (effort: TurnStepInput['effort']) => (effort === undefined ? null : String(effort))
-  return { level: plan.level, model: plan.model, effort: named(plan.effort), ownModel: plan.ownModel, ownEffort: named(plan.ownEffort), at }
+  return { level: plan.level, model: plan.model, effort: named(plan.effort), ownModel: plan.ownModel, ownEffort: named(plan.ownEffort), isKept: plan.isKept, at }
 }
 
 /** Shows in the band what a fitted turn runs on, or nothing when it runs as usual. */
@@ -899,9 +929,9 @@ export async function* fittedStream(
 }
 
 /** A fitted turn in words: "Easy task · Haiku 5.5 at low effort". */
-export function describeRouted(turn: Pick<RoutedTurn, 'level' | 'model' | 'effort'>): string {
+export function describeRouted(turn: Pick<RoutedTurn, 'level' | 'model' | 'effort' | 'isKept'>): string {
   const runsOn = turn.effort === null ? modelName(turn.model) : `${modelName(turn.model)} at ${turn.effort} effort`
-  return `${GRADE_NAMES[turn.level]} task · ${runsOn}`
+  return `${GRADE_NAMES[turn.level]} task · ${runsOn}${turn.isKept ? ' · kept: long conversation' : ''}`
 }
 
 /** The label of the link that asks the last prompt again as usual: on the session's model, or at its effort. */
@@ -1081,7 +1111,7 @@ export const register: Register = on => {
     // The main loop's turns take their task from the prompt that started them; a subagent's are its own.
     if (e.agentId === undefined) {
       const current = await loadSettings($)
-      startTurn(e.turnId, current.route ? { easy: current.easy, mid: current.mid, hard: current.hard } : undefined)
+      startTurn(e.turnId, current.route ? { easy: current.easy, mid: current.mid, hard: current.hard, limit: current.limit } : undefined)
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -1341,6 +1371,7 @@ export const register: Register = on => {
             <Select key="easy" label="Easy tasks" value={current.easy} options={TIER_ROUTES} onSelect={value => changeSetting($, 'easy', value)} />
             <Select key="mid" label="Mid tasks" value={current.mid} options={TIER_ROUTES} onSelect={value => changeSetting($, 'mid', value)} />
             <Select key="hard" label="Hard tasks" value={current.hard} options={TIER_ROUTES} onSelect={value => changeSetting($, 'hard', value)} />
+            <Select key="limit" label="Easy and mid tasks switch up to" value={current.limit} options={LIMITS} onSelect={value => changeSetting($, 'limit', value)} />
           </Box>
           {note !== null && (
             <Box key="ownNote">

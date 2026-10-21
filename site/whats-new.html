@@ -181,7 +181,7 @@ html { scroll-behavior: smooth; }
   </ul>
 
   <section class="day" aria-labelledby="d-21">
-    <h2 class="date" id="d-21">21 October 2026 <span class="tag">Next release</span></h2>
+    <h2 class="date" id="d-21">21 October 2026 <span class="tag">v0.10.0</span></h2>
 
     <article id="calmer-band">
       <h3>A calmer band above the prompt</h3>
@@ -217,7 +217,7 @@ html { scroll-behavior: smooth; }
         <li><span>Set <span class="ui">Fit model and effort to each task</span> to <span class="ui">On</span>.</span></li>
         <li><span>Send a task. The band shows its grade and the model it runs on, and <span class="ui">Ask again on Opus 5.5</span> brings back your usual model.</span></li>
       </ol>
-      <p class="note">Replies stay with their task without a new grading, and an order after an easy question, like “yes” or “push it”, is graded as work of its own. It switches at any length of conversation; in a long one, a switch reads the conversation once without its cache.</p>
+      <p class="note">Replies stay with their task without a new grading, and an order after an easy question, like “yes” or “push it”, is graded as work of its own. It switches at any length of conversation unless you set a limit: in a long one, a switch makes the new model read the conversation once without its cache, so “Easy and mid tasks switch up to” 100,000, 200,000 or 400,000 tokens lets only hard tasks switch past it, and the band says “kept: long conversation”.</p>
       <figure>
         <div class="demo" data-demo="route" role="img" aria-label="The band shows each task's grade and model: an easy question on Haiku 5.5, a mid task on Sonnet 5.5, a hard one on Opus 5.5">
           <div class="band">
@@ -263,6 +263,7 @@ html { scroll-behavior: smooth; }
               <div class="r"><span>Easy tasks</span><span class="v">Haiku 5.5 at low effort</span></div>
               <div class="r" data-pick><span>Mid tasks</span><span class="v">Sonnet 5.5 at medium effort</span></div>
               <div class="r"><span>Hard tasks</span><span class="v">Opus 5.5 at max effort</span></div>
+              <div class="r"><span>Easy and mid tasks switch up to</span><span class="v">No limit</span></div>
             </div>
             <div class="foot">Sonnet 5.5 grades each new task, as part of your plan’s usage, and the task runs on its grade’s model and effort.</div>
           </div>
