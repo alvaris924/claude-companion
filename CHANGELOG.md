@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Added
 
-- The model and effort fitted to each task, off by default: turned on in `/companion`, each task is graded from the person's prompt by rules, a light question goes to Haiku 5.5 at low effort, and heavy work runs one effort level up, or one model up as well when picked, while the conversation is under 100,000 tokens. A proposal ("how about ...", "should we ...") is no light question, and an order that follows a light question, a bare yes or "push it", runs as usual. The band says what a fitted turn ran on, with a redo on the session's own model and effort for a light task, and the settings say when the session already runs as high as the heavy pick goes (#9).
+- Easy, mid and hard tasks, each on its own model and effort, off by default. Turned on in `/companion`, Sonnet 5.5 grades each new task from the request, the one before it and the end of the last answer; an easy task runs on Haiku 5.5 at low effort, a mid one on Sonnet 5.5 at medium and a hard one on Opus 5.5 at max, each grade's pick changeable, at any length of conversation. Short replies and clicked choices keep their task's grade with no new grading, an order after an easy question is graded as work of its own, and rules grade a task when the model gives no grade. The band shows every fitted turn's grade and what it ran on, with a link to ask again on the session's own model and effort (#9, #16).
 
 ## [0.9.0] - 2026-10-19
 

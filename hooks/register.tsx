@@ -24,10 +24,11 @@ import type { LastPrompt, OwnRequest, RoutedTurn, StoredSettings, Suggestion } f
 // person's own words, or puts it in the prompt box to edit. The likeliest is also offered dim in the prompt box where
 // the box shows suggestions (the terminal), Tab to take; VS Code 2.1.300 shows none there.
 //
-// Task routing, off by default: each prompt of the person's is graded light, standard or heavy by rules, with no model
-// call, and the turns of its task run to fit. A turn.step hook sends a light task's requests to Haiku 5.5 at low effort
-// and a heavy task's one effort level up, one model up too when picked, while the conversation is under 100,000 tokens.
-// The band says what a fitted turn ran on, with a link that asks the prompt again as usual.
+// Task routing, off by default: Sonnet 5.5 grades each new task of the person's easy, mid or hard, and a turn.step
+// hook sends the task's requests with that grade's model and effort (Haiku 5.5 low, Sonnet 5.5 medium and Opus 5.5 max
+// unless picked otherwise), at any length of conversation. A reply or a short follow-up keeps the running task's grade
+// with no call, and rules grade a task the model gives no answer for. The band says what every fitted turn runs on,
+// with a link that asks the prompt again as usual where it ran on something else.
 //
 // The look, after Apple's developer pages and quiet note apps: the last prompt as a quote, secondary text dimmed, the
 // choices as quiet buttons with a ↳, and a type scale for the rest. VS Code and the desktop app draw every Button in
@@ -72,8 +73,8 @@ const DOCS_URL = 'https://github.com/alvaris924/claude-companion/blob/main/docs/
 export const REDO_HREF = `${DOCS_URL}?redo=1#the-model-and-effort-for-each-task`
 const SUGGEST_NOTE = 'Written after each answer by the model above, as part of your plan’s usage.'
 const ROUTE_NOTE =
-  'Rules, not a model, read each task: a quick question can go to Haiku 5.5, and big work can think harder. ' +
-  'Only while the conversation is under 100,000 tokens.'
+  'Sonnet 5.5 grades each new task, as part of your plan’s usage, and the task runs on its grade’s model and effort. ' +
+  'A switch makes the new model read the conversation once without its cache.'
 const SAVED_NOTE = 'Saved for every session; other open sessions take a change at their next turn.'
 const LAST_MAX_CHARS = 160 // about two lines where the surface wraps the last prompt
 const PANE_MAX_CHARS = 600
@@ -125,23 +126,37 @@ const EXAMPLES: readonly { end: string; lines: readonly string[] }[] = [
   },
 ]
 
-// Task routing: a light task leaves the session's model for Haiku 5.5 at low effort; a heavy one climbs one effort
-// level, and one model too when the settings say so.
-const LIGHT_MODEL = 'claude-haiku-5-5'
-const LIGHT_EFFORT = 'low'
-// The current models from the cheapest to the most capable: "one model up" for a heavy task.
-const MODEL_LADDER: readonly string[] = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1']
-const EFFORT_LADDER = ['low', 'medium', 'high', 'xhigh', 'max'] as const
-// A first-party id of a Claude model priced above Haiku: what a light task may leave. An id the plugin cannot read (a
-// provider's own spelling, a family it does not know) keeps its model.
-const ABOVE_HAIKU = /^claude-(?:sonnet|opus|fable)-\d/
-// Caches belong to one model, so a switch sends the whole conversation to a model that has not cached it. Below Haiku
-// 5.5's long-context price line, 100K prompt tokens, that costs no more than a cached read on Sonnet, Opus or Fable;
-// above it Haiku costs five times as much. Raising the effort makes the API read the conversation uncached once, so the
-// same line holds for it.
-const ROUTE_MAX_CONTEXT_TOKENS = 100_000
+// Task routing: Sonnet 5.5 grades each new task easy, mid or hard (picked 2026-10-21 over Haiku for its judgment on the
+// borderline ones, at a second or two before the answer starts), and the task's requests go with the model and effort
+// its grade's picker names. Rules grade a task the model gives no answer for. The grading reads the new request with
+// the one before it and the end of the last answer, so a "yes, do it" is graded as the work it takes up.
+const GRADE_MODEL = 'claude-sonnet-5-5'
+const GRADE_EFFORT = 'low'
+const GRADE_MAX_TOKENS = 2048 // its thinking counts against the cap
+const GRADE_TIMEOUT_MS = 8000
+const GRADE_PROMPT_CHARS = 1500
+const GRADE_BEFORE_CHARS = 500
+const GRADE_REPLY_CHARS = 1500
+const GRADE_SYSTEM =
+  "You grade how much thinking a developer's request to Claude Code, their AI coding assistant, needs, so that it " +
+  'runs on a model that fits. Answer with one word: easy, mid or hard.\n' +
+  'easy: a quick question, a lookup, a status check, a short explanation, or a tiny edit such as a rename, a typo or ' +
+  'one obvious line.\n' +
+  'mid: everyday coding work: a bug with a clear cause, a small feature, a change across a few files, tests for ' +
+  'existing code, a doc page, a focused review.\n' +
+  'hard: work that needs planning or deep reasoning: a feature across many files, a refactor or a migration, a bug ' +
+  'with an unclear cause, performance, concurrency or security work, an architecture or design decision.\n' +
+  'A reply that takes up what Claude offered ("yes", "do it", "go with B") is as hard as the work it takes up. ' +
+  'Between two grades, pick the harder one.'
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+// A first-party id of a current Claude model: what a task may move from. A session on an id the plugin cannot read (a
+// provider's own spelling, a family it does not know) keeps its model and effort, and no grading is asked.
+const FIRST_PARTY = /^claude-(?:haiku|sonnet|opus|fable)-\d/
+// Caches belong to one model, and a change of effort makes the API read the conversation uncached once too, so each
+// switch costs one uncached read of the conversation, more as it grows. Switching at any length was chosen 2026-10-21
+// all the same: under the 100K-token line used until then, almost no task of a long session ever switched.
 // Words that start substantial work: building code, reshaping it, moving it, or taking on all of it.
-const HEAVY_WORK =
+const HARD_WORK =
   /\b(?:implement(?:s|ed|ing)?|refactor(?:s|ed|ing)?|re-?architect(?:s|ed|ing)?|migrat(?:e|es|ed|ing)|redesign(?:s|ed|ing)?|rewrit(?:e|es|ing|ten)|rewrote|overhaul(?:s|ed|ing)?|scaffold(?:s|ed|ing)?|from scratch|(?:whole|entire) (?:code ?base|repo(?:sitory)?|project|app))\b/i
 // Lead-ins that soften a request without changing it: "ok", "please", "can you", "let's".
 const SOFT_LEAD = /^(?:(?:ok(?:ay)?|so|and|also|now|hey|please|pls|can you|could you|would you|will you|can we|could we|let'?s)\b[\s,:]*)+/i
@@ -149,26 +164,28 @@ const SOFT_LEAD = /^(?:(?:ok(?:ay)?|so|and|also|now|hey|please|pls|can you|could
 const QUESTION_LEAD = /^(?:what|what's|whats|how|where|which|when|who|whose|explain|summari[sz]e|describe|define|list|remind me|tell me|show me)\b/i
 // A yes-or-no question leads with one of these and ends with "?": "does it handle tabs?" ("do the release" is work).
 const YES_NO_LEAD = /^(?:is|are|was|were|does|do|did|has|have|should|would|could|can|will)\b/i
-// A proposal, or a change being weighed ("how about ...", "what if ...", "should we ..."): no light task, whatever
+// A proposal, or a change being weighed ("how about ...", "what if ...", "should we ..."): no easy task, whatever
 // question it leads with.
 const PROPOSAL =
   /^(?:how (?:about|bout)|what (?:about|if))\b|\b(?:should|shall) (?:we|i|it|there|this|that|they|the|have|be)\b|\bwould it be (?:better|worth)\b/i
-// Signs of something broken: a question about it asks for debugging, which is no light task.
+// Signs of something broken: a question about it asks for debugging, which is no easy task.
 const DEBUG_SIGNS =
   /\b(?:errors?|exceptions?|traceback|stack ?trace|fail(?:s|ed|ing|ure)?|broken|bugs?|crash(?:es|ed|ing)?|regression|flaky|wrong|(?:not|doesn'?t|does not|won'?t|can'?t) work(?:ing)?)\b/i
 // A file or a path the prompt names: "src/a.ts", "README.md".
 const PATH_LIKE =
   /(?:[\w.-]+\/)+[\w.-]+|\b[\w-]+\.(?:tsx?|jsx?|mjs|cjs|json|md|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|ya?ml|toml|css|scss|html|sql|txt|xml|vue|svelte|lock)\b/gi
-const LIGHT_MAX_WORDS = 25
-const HEAVY_MIN_WORDS = 250
-const HEAVY_MIN_PATHS = 4
-// A reply this short continues the running task, and so does a follow-up of up to this many words to heavy work.
-const REPLY_MAX_WORDS = 6
-const HEAVY_FOLLOW_UP_MAX_WORDS = 40
+const EASY_MAX_WORDS = 25
+const HARD_MIN_WORDS = 250
+const HARD_MIN_PATHS = 4
+// A reply this short ("why?", "go on", "and the tests?") continues the running task with no grading. A longer prompt
+// is graded, a short question or a follow-up to hard work included: the grading reads the request before it and the
+// end of the answer, so a follow-up that is hard work stays hard there. Six words until the grading came, which kept
+// short new questions on the task before them.
+const REPLY_MAX_WORDS = 3
 // What a reply may lead with before it says what it wants: a yes, an "ok", a "please", a "let's".
 const REPLY_LEAD =
   /^(?:(?:yes|yep|yeah|yup|sure|ok(?:ay)?|alright|all right|great|cool|nice|perfect|good|fine|done|so|and|also|now|then|hey|please|pls|just|can you|could you|would you|will you|can we|could we|let'?s)\b[\s,.!:;]*)+/i
-// Past that, an order leads with a verb that changes or runs something, or with a go-ahead: after a light question it
+// Past that, an order leads with a verb that changes or runs something, or with a go-ahead: after an easy question it
 // is work of its own, not part of the question.
 const ORDER_LEAD =
   /^(?:(?:add|fix|change|make|update|remove|delete|drop|rename|move|create|write|edit|build|run|test|try|check|commit|push|merge|squash|open|close|apply|revert|undo|deploy|ship|release|install|uninstall|set|turn|enable|disable|replace|bump|restore|keep|use|pr|proceed|continue|start|finish)\b|do (?:it|that|this|both|all|them|so)\b|go(?: ahead\b| for\b|[.!]*$))/i
@@ -182,10 +199,12 @@ type Settings = {
   effort: 'low' | 'medium' | 'high'
   choices: number
   onPress: 'send' | 'box'
-  /** Whether each task's turns run on a model and effort that fit it. */
+  /** Whether each task's turns run on the model and effort its grade's picker names. */
   route: boolean
-  light: 'haiku' | 'keep'
-  heavy: 'effort' | 'model' | 'keep'
+  /** Each grade's model and effort, as "model:effort", or OWN_ROUTE for the session's own. */
+  easy: string
+  mid: string
+  hard: string
 }
 
 const MODELS: readonly SelectOption[] = [
@@ -208,15 +227,25 @@ const ON_OFF: readonly SelectOption[] = [
   { value: 'on', label: 'On' },
   { value: 'off', label: 'Off' },
 ]
-const LIGHT_ROUTES: readonly SelectOption[] = [
-  { value: 'haiku', label: 'Haiku 5.5 at low effort' },
-  { value: 'keep', label: 'My model and effort' },
+// What a grade's task runs on: a model at an effort, or the session's own.
+const OWN_ROUTE = 'own'
+const TIER_ROUTES: readonly SelectOption[] = [
+  { value: 'claude-haiku-5-5:low', label: 'Haiku 5.5 at low effort' },
+  { value: 'claude-haiku-5-5:medium', label: 'Haiku 5.5 at medium effort' },
+  { value: 'claude-sonnet-5-5:low', label: 'Sonnet 5.5 at low effort' },
+  { value: 'claude-sonnet-5-5:medium', label: 'Sonnet 5.5 at medium effort' },
+  { value: 'claude-sonnet-5-5:high', label: 'Sonnet 5.5 at high effort' },
+  { value: 'claude-opus-5-5:medium', label: 'Opus 5.5 at medium effort' },
+  { value: 'claude-opus-5-5:high', label: 'Opus 5.5 at high effort' },
+  { value: 'claude-opus-5-5:max', label: 'Opus 5.5 at max effort' },
+  { value: 'claude-fable-5-1:high', label: 'Fable 5.1 at high effort' },
+  { value: 'claude-fable-5-1:max', label: 'Fable 5.1 at max effort' },
+  { value: OWN_ROUTE, label: 'My model and effort' },
 ]
-const HEAVY_ROUTES: readonly SelectOption[] = [
-  { value: 'effort', label: 'My model, one effort level up' },
-  { value: 'model', label: 'One model and one effort level up' },
-  { value: 'keep', label: 'My model and effort' },
-]
+// Haiku, Sonnet and Opus at a rising effort, picked 2026-10-21.
+const DEFAULT_ROUTES = { easy: 'claude-haiku-5-5:low', mid: 'claude-sonnet-5-5:medium', hard: 'claude-opus-5-5:max' } as const
+// A grade as the band names it.
+const GRADE_NAMES = { easy: 'Easy', mid: 'Mid', hard: 'Hard' } as const
 
 const last = atom({ plugin: 'companion', key: 'last' } as const, null)
 const suggested = atom({ plugin: 'companion', key: 'next' } as const, null)
@@ -250,15 +279,20 @@ let epoch = 0
 // The settings in force, as last read from the store (or picked in the pane).
 let settings: Settings = settingsFrom({})
 
-/** How much a task asks of the model, graded from the person's prompt. */
-export type TaskLevel = 'light' | 'standard' | 'heavy'
-/** The running task: its level, and whether its turns may change model or effort, decided at its first request. */
-type Task = { level: TaskLevel; mayChange?: boolean }
-/** What the settings give a light and a heavy task. */
-type Routes = Pick<Settings, 'light' | 'heavy'>
+/** How much a task asks of the model: its grade. */
+export type TaskLevel = 'easy' | 'mid' | 'hard'
+/** What the grading reads: the request that starts a task, the one before it, and the end of the last answer. */
+export type ToGrade = { prompt: string; before: string; reply: string }
+/**
+ * The running task: its grade (the rules' until the model's comes), what the model is still to grade, and whether it
+ * was asked again as usual, which keeps its turns on the session's own model and effort.
+ */
+type Task = { level: TaskLevel; toGrade?: ToGrade; asUsual?: boolean }
+/** What the settings give each grade. */
+type Routes = Pick<Settings, 'easy' | 'mid' | 'hard'>
 /** The model and effort a fitted turn's requests go with, beside the session's own that its first request named. */
 type Plan = {
-  level: 'light' | 'heavy'
+  level: TaskLevel
   model: string
   effort: TurnStepInput['effort']
   ownModel: string
@@ -266,8 +300,11 @@ type Plan = {
 }
 /** A main-loop turn the settings fit: its task, the routes, and its plan once its first request decided one. */
 type FittedTurn = { task: Task; routes: Routes; plan?: Plan | null }
-/** What the next turn takes from the prompt that starts it: a graded task, or nothing (a command, a program). */
-type Pending = { kind: 'task'; level: TaskLevel; isNew: boolean } | { kind: 'skip' }
+/**
+ * What the next turn takes from the prompt that starts it: its task (the rules' grade, whether a task starts, what the
+ * model grades, and whether it was asked again as usual), or nothing (a command, a program).
+ */
+type Pending = { kind: 'task'; level: TaskLevel; isNew: boolean; toGrade: ToGrade; asUsual?: boolean } | { kind: 'skip' }
 
 // The task the person is on, and what their last prompt asked of the next turn; undefined continues the task.
 let task: Task | null = null
@@ -278,6 +315,8 @@ const fitted = new Map<string, FittedTurn>()
 let isFitRefused = false
 // The session's own model and effort as last written to state, so a turn writes them again only when they change.
 let ownKey = ''
+// The last main-loop answer, whose end the grading of the next task reads.
+let lastReply = ''
 
 /** `value` when it is one of `options`' values, else `fallback`. */
 export function pick(value: unknown, options: readonly SelectOption[], fallback: string): string {
@@ -293,8 +332,9 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
     choices: Number(pick(stored.choices, CHOICE_COUNTS, '3')),
     onPress: pick(stored.onPress, PRESS_ACTIONS, 'send') as Settings['onPress'],
     route: typeof stored.route === 'boolean' ? stored.route : false,
-    light: pick(stored.light, LIGHT_ROUTES, 'haiku') as Settings['light'],
-    heavy: pick(stored.heavy, HEAVY_ROUTES, 'effort') as Settings['heavy'],
+    easy: pick(stored.easy, TIER_ROUTES, DEFAULT_ROUTES.easy),
+    mid: pick(stored.mid, TIER_ROUTES, DEFAULT_ROUTES.mid),
+    hard: pick(stored.hard, TIER_ROUTES, DEFAULT_ROUTES.hard),
   }
 }
 
@@ -326,11 +366,14 @@ export function labelOf(options: readonly SelectOption[], value: string): string
   return options.find(option => option.value === value)?.label ?? value
 }
 
+/** Each grade's pick in words: "easy tasks: Haiku 5.5 at low effort". */
+export function tiersOf(current: Routes): string[] {
+  return (['easy', 'mid', 'hard'] as const).map(level => `${level} tasks: ${labelOf(TIER_ROUTES, current[level])}`)
+}
+
 /** The settings on one line of plain text, for a host that draws no pane. */
 export function settingsLine(current: Settings): string {
-  const routing = current.route
-    ? `on (light tasks: ${labelOf(LIGHT_ROUTES, current.light)}; heavy tasks: ${labelOf(HEAVY_ROUTES, current.heavy)})`
-    : 'off'
+  const routing = current.route ? `on (${tiersOf(current).join('; ')})` : 'off'
   return (
     `Suggestions: ${current.suggest ? 'on' : 'off'} · Model: ${labelOf(MODELS, current.model)} · ` +
     `Effort: ${current.effort} · Choices: ${current.choices} · Clicking a choice: ${labelOf(PRESS_ACTIONS, current.onPress)} · ` +
@@ -352,8 +395,7 @@ export function suggestionsLine(current: Settings): string {
 
 /** The routing settings in one line, as the mobile pane lists them. */
 export function routingLine(current: Settings): string {
-  if (!current.route) return 'Off'
-  return `On · light tasks: ${labelOf(LIGHT_ROUTES, current.light)} · heavy tasks: ${labelOf(HEAVY_ROUTES, current.heavy)}`
+  return current.route ? ['On', ...tiersOf(current)].join(' · ') : 'Off'
 }
 
 /** One line of at most `max` characters: whitespace runs (line breaks included) become one space. */
@@ -522,10 +564,11 @@ export async function sendChoice($: EngineInterface, text: string): Promise<void
   })
   if (!isTaken) return
 
+  // A choice continues the task it answers, unless it orders work after an easy question: taken before the choice
+  // becomes the last prompt, so the grading reads the request before it.
+  pending = await pendingTask($, text, offered)
   // Recorded here: the prompt hook below never sees this mod's own submit.
   await recordPrompt($, text, false)
-  // A choice continues the task it answers, unless it orders work after a light question.
-  pending = { kind: 'task', ...nextLevel(text, task?.level ?? null, offered) }
   await $.prompt.submit({ text, asUser: true })
 }
 
@@ -605,28 +648,28 @@ export function wordsIn(text: string): number {
 }
 
 /**
- * How much a task asks of the model, from the prompt that starts it: heavy for building, reshaping or moving code and
- * for long prompts or many paths; light for a short question or a request to explain, with nothing broken in it,
- * nothing pasted and no change proposed; standard otherwise.
+ * The rules' grade of a task, from the prompt that starts it, for when the model gives none: hard for building,
+ * reshaping or moving code and for long prompts or many paths; easy for a short question or a request to explain, with
+ * nothing broken in it, nothing pasted and no change proposed; mid otherwise.
  */
 export function gradeTask(text: string): TaskLevel {
   const words = wordsIn(text)
   const paths = new Set((text.match(PATH_LIKE) ?? []).map(path => path.toLowerCase())).size
-  if (HEAVY_WORK.test(text) || words > HEAVY_MIN_WORDS || paths >= HEAVY_MIN_PATHS) return 'heavy'
+  if (HARD_WORK.test(text) || words > HARD_MIN_WORDS || paths >= HARD_MIN_PATHS) return 'hard'
 
   const asked = text.trim().replace(SOFT_LEAD, '')
   const isQuestion =
     (QUESTION_LEAD.test(asked) || (YES_NO_LEAD.test(asked) && /\?\s*$/.test(asked))) && !PROPOSAL.test(asked)
   const isPlain =
-    words <= LIGHT_MAX_WORDS && paths <= 1 && text.trim().split('\n').length <= 2 && !text.includes('```') && !DEBUG_SIGNS.test(text)
-  return isQuestion && isPlain ? 'light' : 'standard'
+    words <= EASY_MAX_WORDS && paths <= 1 && text.trim().split('\n').length <= 2 && !text.includes('```') && !DEBUG_SIGNS.test(text)
+  return isQuestion && isPlain ? 'easy' : 'mid'
 }
 
 /** Whether a prompt only answers the last turn: one of its choices, or a few words that start no new work. */
 export function isReply(text: string, choices: readonly string[]): boolean {
   const same = (said: string) => said.trim().toLowerCase().replace(/[.!?]+$/, '')
   if (choices.some(choice => same(choice) === same(text))) return true
-  return wordsIn(text) <= REPLY_MAX_WORDS && !HEAVY_WORK.test(text)
+  return wordsIn(text) <= REPLY_MAX_WORDS && !HARD_WORK.test(text)
 }
 
 /** Whether a reply orders work rather than asks or acknowledges: "push it", "yep, let's do it", a bare "yes". */
@@ -637,28 +680,31 @@ export function isOrder(text: string): boolean {
 }
 
 /**
- * The level of the task a prompt works on: its own grade when it starts a task, the running task's when it answers
- * the last turn or follows up heavy work. An order after a light question starts a task of its own, a pressed choice
- * included, so the work does not stay on the light model. `isNew` says a task starts, so its first request decides
- * afresh.
+ * The grade of the task a prompt works on: the rules' when it starts a task, until the model grades it, and the
+ * running task's when it only answers the last turn, with no grading asked. An order after an easy question starts a
+ * task of its own, a pressed choice included, so the work does not stay on the easy model. `isNew` says a task starts.
  */
 export function nextLevel(text: string, running: TaskLevel | null, choices: readonly string[]): { level: TaskLevel; isNew: boolean } {
   const graded = gradeTask(text)
   if (running === null) return { level: graded, isNew: true }
-  if (running === 'light' && isOrder(text)) return { level: graded === 'light' ? 'standard' : graded, isNew: true }
+  if (running === 'easy' && isOrder(text)) return { level: graded === 'easy' ? 'mid' : graded, isNew: true }
   if (isReply(text, choices)) return { level: running, isNew: false }
-  if (running === 'heavy' && graded !== 'heavy' && wordsIn(text) <= HEAVY_FOLLOW_UP_MAX_WORDS) return { level: running, isNew: false }
   return { level: graded, isNew: true }
 }
 
-/** Grades the person's prompt for the turn it starts; a command's or a program's prompt leaves that turn alone. */
+/** What a prompt of the person's gives the turn it starts; taken before it becomes the last prompt. */
+export async function pendingTask($: EngineInterface, text: string, choices: readonly string[]): Promise<Pending> {
+  const before = (await read($, last))?.text ?? ''
+  return { kind: 'task', ...nextLevel(text, task?.level ?? null, choices), toGrade: { prompt: text, before, reply: lastReply } }
+}
+
+/** Takes the person's prompt for the turn it starts; a command's or a program's prompt leaves that turn alone. */
 export async function noteTask($: EngineInterface, text: string, isLeftAlone: boolean): Promise<void> {
   if (isLeftAlone) {
     pending = { kind: 'skip' }
     return
   }
-  const choices = (await read($, suggested))?.choices ?? []
-  pending = { kind: 'task', ...nextLevel(text, task?.level ?? null, choices) }
+  pending = await pendingTask($, text, (await read($, suggested))?.choices ?? [])
 }
 
 /** A main-loop turn begins: it takes its task from the prompt that started it, and is fitted when `routes` are given. */
@@ -666,16 +712,45 @@ export function startTurn(turnId: string, routes: Routes | undefined): void {
   const decided = pending
   pending = undefined
   if (decided?.kind === 'skip') return
-  if (decided?.kind === 'task' && (decided.isNew || task === null)) task = { level: decided.level }
+  if (decided?.kind === 'task' && (decided.isNew || task === null)) {
+    task = decided.asUsual ? { level: decided.level, asUsual: true } : { level: decided.level, toGrade: decided.toGrade }
+  }
   if (task !== null && routes !== undefined && !isFitRefused) fitted.set(turnId, { task, routes })
 }
 
-/** The session's context fill in tokens: 0 before the first reading, unbounded where it cannot be read. */
-export async function contextTokens($: EngineInterface): Promise<number> {
+/** What the grading reads: the request before, the end of the last answer and the new request, each cut to size. */
+export function gradingPrompt(toGrade: ToGrade): string {
+  const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text)
+  const tail = toGrade.reply.length > GRADE_REPLY_CHARS ? `…${toGrade.reply.slice(-GRADE_REPLY_CHARS)}` : toGrade.reply
+  return (
+    `<previous_request>\n${cut(toGrade.before, GRADE_BEFORE_CHARS) || '(none)'}\n</previous_request>\n\n` +
+    `<claude_reply_end>\n${tail || '(none)'}\n</claude_reply_end>\n\n` +
+    `<new_request>\n${cut(toGrade.prompt, GRADE_PROMPT_CHARS)}\n</new_request>\n\n` +
+    'Grade the new request: easy, mid or hard.'
+  )
+}
+
+/** The grade a model's answer names first ("Mid.", "hard"); null when it names none. */
+export function gradeOf(answer: string): TaskLevel | null {
+  const named = /\b(easy|mid|medium|hard)\b/i.exec(answer)?.[1]?.toLowerCase()
+  if (named === undefined) return null
+  return named === 'medium' ? 'mid' : (named as TaskLevel)
+}
+
+/** The model's grade of a task; null when it gives none in time, and the rules' grade stands. */
+export async function gradeWithModel($: EngineInterface, toGrade: ToGrade): Promise<TaskLevel | null> {
   try {
-    return (await $.session.usage()).context.tokens ?? 0
+    const answer = await $.model.complete({
+      model: GRADE_MODEL,
+      system: GRADE_SYSTEM,
+      prompt: gradingPrompt(toGrade),
+      maxTokens: GRADE_MAX_TOKENS,
+      effort: GRADE_EFFORT,
+      timeoutMs: GRADE_TIMEOUT_MS,
+    })
+    return answer.isAnswered ? gradeOf(answer.text) : null
   } catch {
-    return Number.POSITIVE_INFINITY
+    return null // a request the engine refuses to send: the rules' grade stands
   }
 }
 
@@ -690,34 +765,16 @@ export function modelName(model: string): string {
   return label === undefined ? model : (label.split(':')[0] ?? label)
 }
 
-/** One effort level up, `max` at most; a number, or no effort at all, stays as it is. */
-export function raisedEffort(effort: TurnStepInput['effort']): TurnStepInput['effort'] {
-  if (typeof effort !== 'string') return effort
-  const at = EFFORT_LADDER.indexOf(effort)
-  return at < 0 ? effort : (EFFORT_LADDER[Math.min(at + 1, EFFORT_LADDER.length - 1)] ?? effort)
-}
-
-/** One model up the ladder, Fable 5.1 at its top; a model off the ladder stays as it is. */
-export function steppedUp(model: string): string {
-  const at = MODEL_LADDER.indexOf(baseModel(model))
-  return at < 0 ? model : (MODEL_LADDER[at + 1] ?? model)
-}
-
-/** What a task's turns go with in place of the session's own model and effort; null leaves them as they are. */
-export function routeFor(
-  level: TaskLevel,
-  routes: Routes,
-  own: Pick<TurnStepInput, 'model' | 'effort'>,
-): Pick<Plan, 'model' | 'effort'> | null {
-  if (level === 'light') {
-    const isLighter = routes.light === 'haiku' && ABOVE_HAIKU.test(baseModel(own.model))
-    return isLighter ? { model: LIGHT_MODEL, effort: LIGHT_EFFORT } : null
-  }
-  if (level === 'standard' || routes.heavy === 'keep') return null
-
-  const model = routes.heavy === 'model' ? steppedUp(own.model) : own.model
-  const effort = raisedEffort(own.effort)
-  return model === own.model && effort === own.effort ? null : { model, effort }
+/**
+ * What a grade's task goes with in place of the session's own model and effort: its picker's model, with the
+ * context-window mark the session's own model carries ("[1m]"), at its effort. Null leaves them as they are: for "my
+ * model and effort", and for a session on a model the plugin cannot read.
+ */
+export function routeFor(level: TaskLevel, routes: Routes, own: Pick<TurnStepInput, 'model' | 'effort'>): Pick<Plan, 'model' | 'effort'> | null {
+  const [model, named] = routes[level].split(':')
+  const effort = EFFORT_LEVELS.find(known => known === named)
+  if (model === undefined || effort === undefined || !FIRST_PARTY.test(baseModel(own.model))) return null
+  return { model: `${model}${own.model.slice(baseModel(own.model).length)}`, effort }
 }
 
 /** Keeps the session's own model and effort as a main-loop turn's first request names them, for the settings pane. */
@@ -734,28 +791,34 @@ export async function noteOwn($: EngineInterface, e: TurnStepInput): Promise<voi
 }
 
 /**
- * Why heavy tasks run as usual whatever the heavy pick says: the session's own model and effort already stand as high
- * as the pick goes, as with max effort. Null while the pick would change them, before the first request is seen, and
- * for "my model and effort".
+ * What "my model and effort" stands for in this session, for the settings while a grade's picker names it; null before
+ * the first request is seen.
  */
-export function heavyNote(heavy: Settings['heavy'], seen: OwnRequest | null): string | null {
-  if (seen === null || heavy === 'keep') return null
-  const canRaiseEffort = seen.effort !== 'max' && EFFORT_LADDER.some(level => level === seen.effort)
-  const canStepUp = heavy === 'model' && steppedUp(seen.model) !== seen.model
-  if (canRaiseEffort || canStepUp) return null
+export function ownNote(current: Routes, seen: OwnRequest | null): string | null {
+  if (seen === null || ![current.easy, current.mid, current.hard].includes(OWN_ROUTE)) return null
   const effort = seen.effort === null ? '' : ` at ${seen.effort} effort`
-  return `Heavy tasks run as usual here: this session already runs on ${modelName(seen.model)}${effort}.`
+  return `“My model and effort” is ${modelName(seen.model)}${effort} in this session.`
 }
 
-/** Decides a fitted turn at its first request: what its task's level gets, while the conversation is small enough. */
-export async function planTurn($: EngineInterface, turn: FittedTurn, e: TurnStepInput): Promise<Plan | null> {
-  const level = turn.task.level
-  const route = routeFor(level, turn.routes, e)
-  if (route === null || level === 'standard') return null
+/**
+ * Decides a fitted turn at its first request: the model grades its task when the turn starts one (once per task, so
+ * its other turns keep the grade), and the turn goes with what that grade's picker names. Every fitted turn gets a
+ * plan, so the band says what each one runs on.
+ */
+export async function planTurn($: EngineInterface, turn: FittedTurn, e: TurnStepInput): Promise<Plan> {
+  const { task } = turn
+  if (task.toGrade !== undefined) {
+    const graded = FIRST_PARTY.test(baseModel(e.model)) ? await gradeWithModel($, task.toGrade) : null
+    task.level = graded ?? task.level
+    delete task.toGrade
+  }
+  const route = task.asUsual ? null : routeFor(task.level, turn.routes, e)
+  return { level: task.level, model: route?.model ?? e.model, effort: route?.effort ?? e.effort, ownModel: e.model, ownEffort: e.effort }
+}
 
-  // Decided once per task: a task that changed model or effort keeps it, as going back would cost a cache write too.
-  turn.task.mayChange ??= (await contextTokens($)) < ROUTE_MAX_CONTEXT_TOKENS
-  return turn.task.mayChange ? { level, ...route, ownModel: e.model, ownEffort: e.effort } : null
+/** Whether a fitted turn runs on another model or effort than the session's own. */
+export function isMoved(turn: { model: string; effort: unknown; ownModel: string; ownEffort: unknown }): boolean {
+  return turn.model !== turn.ownModel || turn.effort !== turn.ownEffort
 }
 
 /** A plan as the band keeps it. */
@@ -780,8 +843,9 @@ export async function routedStep($: EngineInterface, e: TurnStepInput): Promise<
   }
 
   const { plan } = turn
-  // A request on another model than the turn's first is the engine's own choice, a fallback: it stands.
-  if (plan === null || e.model !== plan.ownModel) return undefined
+  // A request on another model than the turn's first is the engine's own choice, a fallback: it stands. A turn its
+  // grade keeps on the session's own model and effort goes as the engine made it.
+  if (plan === null || e.model !== plan.ownModel || !isMoved(plan)) return undefined
   return plan.effort === undefined ? { model: plan.model } : { model: plan.model, effort: plan.effort }
 }
 
@@ -834,10 +898,10 @@ export async function* fittedStream(
   return yield* stream
 }
 
-/** A fitted turn in words: "Light task · Haiku 5.5 at low effort". */
+/** A fitted turn in words: "Easy task · Haiku 5.5 at low effort". */
 export function describeRouted(turn: Pick<RoutedTurn, 'level' | 'model' | 'effort'>): string {
   const runsOn = turn.effort === null ? modelName(turn.model) : `${modelName(turn.model)} at ${turn.effort} effort`
-  return `${turn.level === 'light' ? 'Light' : 'Heavy'} task · ${runsOn}`
+  return `${GRADE_NAMES[turn.level]} task · ${runsOn}`
 }
 
 /** The label of the link that asks the last prompt again as usual: on the session's model, or at its effort. */
@@ -848,16 +912,16 @@ export function redoLabel(turn: RoutedTurn): string {
 
 /** Asks the last prompt again on the session's own model and effort, once however often it is pressed. */
 export async function redoAsUsual($: EngineInterface): Promise<void> {
-  let wasFitted = false
+  const taken: { turn: RoutedTurn | null } = { turn: null }
   await update($, routed, current => {
-    wasFitted = current !== null
+    taken.turn = current
     return null
   })
   const prompt = await read($, last)
-  if (!wasFitted || prompt === null) return
+  if (taken.turn === null || prompt === null) return
 
-  // A new task at the person's own level: its follow-ups stay there.
-  pending = { kind: 'task', level: 'standard', isNew: true }
+  // A new task on the session's own model and effort, under the grade it had: its follow-ups stay there.
+  pending = { kind: 'task', level: taken.turn.level, isNew: true, asUsual: true, toGrade: { prompt: prompt.text, before: '', reply: '' } }
   await recordPrompt($, prompt.text, prompt.isFromProgram)
   await $.prompt.submit({ text: prompt.text, asUser: true })
 }
@@ -876,12 +940,12 @@ export function quoteOf(text: string, max: number): string {
 }
 
 /**
- * What a fitted turn ran on, quietly, and once a light one has ended, a link that asks the prompt again as usual: a
- * dim line and a button on the terminal, one dim markdown line with its link elsewhere.
+ * What a fitted turn runs on, quietly, and once one that ran on something else has ended, a link that asks the prompt
+ * again as usual: a dim line and a button on the terminal, one dim markdown line with its link elsewhere.
  */
 function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, canRedo: boolean, isTerminal: boolean) {
   const { Box, Button, Markdown, Text } = ui
-  const hasRedo = fit.level === 'light' && canRedo
+  const hasRedo = canRedo && isMoved(fit)
   if (!isTerminal) {
     const redo = hasRedo ? ` · [${escapeMarkdown(redoLabel(fit))}](${REDO_HREF})` : ''
     return (
@@ -956,7 +1020,7 @@ export const register: Register = on => {
     if (await openSettings($)) return { text: 'Companion settings opened.' }
 
     const current = await loadSettings($)
-    const note = heavyNote(current.heavy, await read($, own))
+    const note = current.route ? ownNote(current, await read($, own)) : null
     const lines = [settingsLine(current), note, 'No panel draws here: run /companion in VS Code or the terminal to change them.']
     return { text: lines.filter(line => line !== null).join('\n') }
   })
@@ -1017,7 +1081,7 @@ export const register: Register = on => {
     // The main loop's turns take their task from the prompt that started them; a subagent's are its own.
     if (e.agentId === undefined) {
       const current = await loadSettings($)
-      startTurn(e.turnId, current.route ? { light: current.light, heavy: current.heavy } : undefined)
+      startTurn(e.turnId, current.route ? { easy: current.easy, mid: current.mid, hard: current.hard } : undefined)
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -1040,6 +1104,7 @@ export const register: Register = on => {
     // Main-thread turns that answered: a subagent's report, an interrupted turn or a refusal suggests nothing.
     if (e.agentId !== undefined || e.reason !== 'answer' || e.answer.trim().length === 0) return result
 
+    lastReply = e.answer
     const current = await loadSettings($)
     const ask = epoch
     const prompt = await read($, last)
@@ -1188,7 +1253,7 @@ export const register: Register = on => {
     // Drawn from $.state (a pick redraws it); a render never writes, so before the first load it reads the store.
     const drawn = await read($, savedSettings)
     const current = drawn !== null ? settingsFrom(drawn) : ((await readSettings($)) ?? settings)
-    const note = heavyNote(current.heavy, await read($, own))
+    const note = ownNote(current, await read($, own))
     if (e.surface === 'mobile') {
       // The mobile app draws no picker: the settings as text, in the same groups, changed from a computer.
       const { Box, Text } = $.ui.resolve(e)
@@ -1210,7 +1275,7 @@ export const register: Register = on => {
               <Text>{routingLine(current)}</Text>
             </Box>
             {note !== null && (
-              <Box key="heavyNote">
+              <Box key="ownNote">
                 <Text size="footnote" dimColor>
                   {note}
                 </Text>
@@ -1273,11 +1338,12 @@ export const register: Register = on => {
               options={ON_OFF}
               onSelect={value => changeSetting($, 'route', value === 'on')}
             />
-            <Select key="light" label="Light tasks" value={current.light} options={LIGHT_ROUTES} onSelect={value => changeSetting($, 'light', value)} />
-            <Select key="heavy" label="Heavy tasks" value={current.heavy} options={HEAVY_ROUTES} onSelect={value => changeSetting($, 'heavy', value)} />
+            <Select key="easy" label="Easy tasks" value={current.easy} options={TIER_ROUTES} onSelect={value => changeSetting($, 'easy', value)} />
+            <Select key="mid" label="Mid tasks" value={current.mid} options={TIER_ROUTES} onSelect={value => changeSetting($, 'mid', value)} />
+            <Select key="hard" label="Hard tasks" value={current.hard} options={TIER_ROUTES} onSelect={value => changeSetting($, 'hard', value)} />
           </Box>
           {note !== null && (
-            <Box key="heavyNote">
+            <Box key="ownNote">
               <Text size="footnote" dimColor>
                 {note}
               </Text>

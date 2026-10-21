@@ -6,7 +6,7 @@ export type Suggestion = { choices: string[]; at: number }
 
 /**
  * The settings as the settings pane saves them in the plugin's store: each picker's value. `route` fits each task's
- * model and effort, `light` and `heavy` say how.
+ * model and effort to its grade; `easy`, `mid` and `hard` name each grade's as "model:effort", or "own".
  */
 export type StoredSettings = {
   suggest: boolean
@@ -15,16 +15,18 @@ export type StoredSettings = {
   choices: string
   onPress: string
   route: boolean
-  light: string
-  heavy: string
+  easy: string
+  mid: string
+  hard: string
 }
 
 /**
- * A turn fitted to its task: how the task was graded, the model and effort its requests went with, and the session's
- * own model and effort they would have gone with. An effort is null where the request named none.
+ * A turn fitted to its task: the task's grade, the model and effort its requests went with, and the session's own
+ * model and effort they would have gone with, the same where the grade keeps them. An effort is null where the request
+ * named none.
  */
 export type RoutedTurn = {
-  level: 'light' | 'heavy'
+  level: 'easy' | 'mid' | 'hard'
   model: string
   effort: string | null
   ownModel: string

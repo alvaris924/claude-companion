@@ -1,6 +1,6 @@
 # ADR-0009: Fit the model and effort to each task, by rules, under 100,000 tokens
 
-- Status: accepted
+- Status: superseded by [ADR-0011](0011-easy-mid-hard-graded-by-a-model.md)
 - Date: 2026-10-19
 
 ## Context
