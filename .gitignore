@@ -31,3 +31,5 @@ desktop.ini
 
 # Vercel CLI project link, written by `vercel link` in site/
 .vercel/
+# and the token `vercel link` writes next to it
+.env*.local
