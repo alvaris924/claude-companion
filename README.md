@@ -1,6 +1,6 @@
 # Companion
 
-A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click.
+A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click. See it in motion at [claudecompanion.vercel.app](https://claudecompanion.vercel.app).
 
 > **Status: v0.9.0, the first public release.** What comes next is in the [milestones](https://github.com/alvaris924/claude-companion/milestones).
 
