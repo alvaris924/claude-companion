@@ -171,6 +171,7 @@ html { scroll-behavior: smooth; }
   <p class="intro">Companion is a Claude Code plugin that keeps your last prompt in view and suggests what you might send next. Here is what changed lately, and how to use each part.</p>
 
   <ul class="jump" aria-label="Jump to an entry">
+    <li><a href="#grader">A grader that leans hard</a></li>
     <li><a href="#calmer-band">A calmer band</a></li>
     <li><a href="#model-per-task">Easy, mid and hard tasks</a></li>
     <li><a href="#settings-groups">Settings in two groups</a></li>
@@ -179,6 +180,17 @@ html { scroll-behavior: smooth; }
     <li><a href="#sonnet-default">Sonnet 5.5 by default</a></li>
     <li><a href="#last-prompt">Your last prompt in view</a></li>
   </ul>
+
+  <section class="day" aria-labelledby="d-21b">
+    <h2 class="date" id="d-21b">21 October 2026 <span class="tag">v0.10.1</span></h2>
+
+    <article id="grader">
+      <h3>A grader that leans hard</h3>
+      <p>The grader that sorts each task into easy, mid or hard was checked against 120 prompts typed in real sessions. It sorted them in the right order, with two slips: some requests to change or run something were graded easy, and on some runs a hard task got a mid grade.</p>
+      <p>Easy now means only a question, a lookup, a status check or a short explanation. Anything that edits files, runs commands, commits, merges or deploys is at least mid, and when a task could need hard-level reasoning the grader answers hard. A wrong easy grade gets a weaker model and a worse result, while a wrong hard grade only costs more.</p>
+      <p class="note">On the same 120 prompts, easy grades that went on to take ten or more tool calls fell from 4 to 1 or 0. Expect a few more tasks on Opus 5.5 at max effort.</p>
+    </article>
+  </section>
 
   <section class="day" aria-labelledby="d-21">
     <h2 class="date" id="d-21">21 October 2026 <span class="tag">v0.10.0</span></h2>
