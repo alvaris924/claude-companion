@@ -134,6 +134,9 @@ const GRADE_MODEL = 'claude-sonnet-5-5'
 const GRADE_EFFORT = 'low'
 const GRADE_MAX_TOKENS = 2048 // its thinking counts against the cap
 const GRADE_TIMEOUT_MS = 8000
+// With two calls, how long the second may take once the first has answered: a call that hangs costs the task this much
+// at most, not the whole timeout.
+const GRADE_GRACE_MS = 2500
 const GRADE_PROMPT_CHARS = 1500
 const GRADE_BEFORE_CHARS = 500
 const GRADE_REPLY_CHARS = 1500
@@ -209,6 +212,10 @@ type Settings = {
   hard: string
   /** The conversation size, in tokens, past which only hard tasks switch; NO_LIMIT for none. */
   limit: string
+  /** How many times a new task is graded: GRADE_ONCE, or GRADE_TWICE to keep the harder of two grades. */
+  grading: string
+  /** The model that grades new tasks, at low effort. */
+  grader: string
 }
 
 const MODELS: readonly SelectOption[] = [
@@ -256,6 +263,12 @@ const LIMITS: readonly SelectOption[] = [
   { value: '200000', label: '200,000 tokens' },
   { value: '400000', label: '400,000 tokens' },
 ]
+const GRADE_ONCE = 'one'
+const GRADE_TWICE = 'two'
+const GRADINGS: readonly SelectOption[] = [
+  { value: GRADE_ONCE, label: 'One call' },
+  { value: GRADE_TWICE, label: 'Two calls, keep the harder grade' },
+]
 // A grade as the band names it.
 const GRADE_NAMES = { easy: 'Easy', mid: 'Mid', hard: 'Hard' } as const
 
@@ -301,7 +314,7 @@ export type ToGrade = { prompt: string; before: string; reply: string }
  */
 type Task = { level: TaskLevel; toGrade?: ToGrade; asUsual?: boolean }
 /** What the settings give each grade. */
-type Routes = Pick<Settings, 'easy' | 'mid' | 'hard' | 'limit'>
+type Routes = Pick<Settings, 'easy' | 'mid' | 'hard' | 'limit' | 'grading' | 'grader'>
 /** The model and effort a fitted turn's requests go with, beside the session's own that its first request named. */
 type Plan = {
   level: TaskLevel
@@ -350,6 +363,8 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
     mid: pick(stored.mid, TIER_ROUTES, DEFAULT_ROUTES.mid),
     hard: pick(stored.hard, TIER_ROUTES, DEFAULT_ROUTES.hard),
     limit: pick(stored.limit, LIMITS, NO_LIMIT),
+    grading: pick(stored.grading, GRADINGS, GRADE_ONCE),
+    grader: pick(stored.grader, MODELS, GRADE_MODEL),
   }
 }
 
@@ -386,6 +401,13 @@ export function limitLine(current: Pick<Settings, 'limit'>): string {
   return current.limit === NO_LIMIT ? 'switching at any length' : `easy and mid tasks switch up to ${labelOf(LIMITS, current.limit)}`
 }
 
+/** The grading in words, when it is not the default: "two grading calls, the harder kept". */
+export function gradingLine(current: Pick<Settings, 'grading' | 'grader'>): string | null {
+  const parts = [current.grading === GRADE_TWICE ? 'two grading calls, the harder kept' : null, current.grader === GRADE_MODEL ? null : `${modelName(current.grader)} grades`]
+  const named = parts.filter(part => part !== null)
+  return named.length === 0 ? null : named.join('; ')
+}
+
 /** Each grade's pick in words: "easy tasks: Haiku 5.5 at low effort". */
 export function tiersOf(current: Routes): string[] {
   return (['easy', 'mid', 'hard'] as const).map(level => `${level} tasks: ${labelOf(TIER_ROUTES, current[level])}`)
@@ -393,7 +415,7 @@ export function tiersOf(current: Routes): string[] {
 
 /** The settings on one line of plain text, for a host that draws no pane. */
 export function settingsLine(current: Settings): string {
-  const routing = current.route ? `on (${[...tiersOf(current), limitLine(current)].join('; ')})` : 'off'
+  const routing = current.route ? `on (${[...tiersOf(current), limitLine(current), gradingLine(current)].filter(part => part !== null).join('; ')})` : 'off'
   return (
     `Suggestions: ${current.suggest ? 'on' : 'off'} · Model: ${labelOf(MODELS, current.model)} · ` +
     `Effort: ${current.effort} · Choices: ${current.choices} · Clicking a choice: ${labelOf(PRESS_ACTIONS, current.onPress)} · ` +
@@ -415,7 +437,7 @@ export function suggestionsLine(current: Settings): string {
 
 /** The routing settings in one line, as the mobile pane lists them. */
 export function routingLine(current: Settings): string {
-  return current.route ? ['On', ...tiersOf(current), limitLine(current)].join(' · ') : 'Off'
+  return current.route ? ['On', ...tiersOf(current), limitLine(current), gradingLine(current)].filter(part => part !== null).join(' · ') : 'Off'
 }
 
 /** One line of at most `max` characters: whitespace runs (line breaks included) become one space. */
@@ -757,11 +779,11 @@ export function gradeOf(answer: string): TaskLevel | null {
   return named === 'medium' ? 'mid' : (named as TaskLevel)
 }
 
-/** The model's grade of a task; null when it gives none in time, and the rules' grade stands. */
-export async function gradeWithModel($: EngineInterface, toGrade: ToGrade): Promise<TaskLevel | null> {
+/** One call of the grader; null when it gives no grade in time. */
+export async function gradeOnce($: EngineInterface, toGrade: ToGrade, model: string = GRADE_MODEL): Promise<TaskLevel | null> {
   try {
     const answer = await $.model.complete({
-      model: GRADE_MODEL,
+      model,
       system: GRADE_SYSTEM,
       prompt: gradingPrompt(toGrade),
       maxTokens: GRADE_MAX_TOKENS,
@@ -772,6 +794,40 @@ export async function gradeWithModel($: EngineInterface, toGrade: ToGrade): Prom
   } catch {
     return null // a request the engine refuses to send: the rules' grade stands
   }
+}
+
+/**
+ * The model's grade of a task: one call, or two at once with the harder grade kept, since a grade too low costs the
+ * person a weaker model and a worse result while one too high only costs more. A call that fails leaves the other's
+ * grade; null when none gives one, and the rules' grade stands.
+ */
+export async function gradeWithModel(
+  $: EngineInterface,
+  toGrade: ToGrade,
+  grading: string = GRADE_ONCE,
+  grader: string = GRADE_MODEL,
+): Promise<TaskLevel | null> {
+  if (grading !== GRADE_TWICE) return gradeOnce($, toGrade, grader)
+
+  // Both calls start together. A hard grade ends the wait, as nothing is harder; once one call has given a grade, the
+  // other has GRADE_GRACE_MS more, so a hung call never holds the task up for the whole timeout.
+  const order: readonly TaskLevel[] = ['easy', 'mid', 'hard']
+  const pending = new Map<number, Promise<{ id: number; grade: TaskLevel | null }>>()
+  for (const id of [0, 1]) pending.set(id, gradeOnce($, toGrade, grader).then(grade => ({ id, grade })))
+
+  let best: TaskLevel | null = null
+  let grace: Promise<null> | undefined
+  const stop = new AbortController()
+  while (pending.size > 0 && best !== 'hard') {
+    const done = await Promise.race(grace === undefined ? [...pending.values()] : [...pending.values(), grace])
+    if (done === null) break
+
+    pending.delete(done.id)
+    if (done.grade !== null && (best === null || order.indexOf(done.grade) > order.indexOf(best))) best = done.grade
+    if (best !== null) grace ??= $.clock.sleep(GRADE_GRACE_MS, { signal: stop.signal }).then(() => null, () => null)
+  }
+  stop.abort() // the grace wait is over, whichever way: no timer is left running
+  return best
 }
 
 /** A model id without the context-window mark some carry ("claude-opus-5-5[1m]"). */
@@ -828,7 +884,7 @@ export function ownNote(current: Routes, seen: OwnRequest | null): string | null
 export async function planTurn($: EngineInterface, turn: FittedTurn, e: TurnStepInput): Promise<Plan> {
   const { task } = turn
   if (task.toGrade !== undefined) {
-    const graded = FIRST_PARTY.test(baseModel(e.model)) ? await gradeWithModel($, task.toGrade) : null
+    const graded = FIRST_PARTY.test(baseModel(e.model)) ? await gradeWithModel($, task.toGrade, turn.routes.grading, turn.routes.grader) : null
     task.level = graded ?? task.level
     delete task.toGrade
   }
@@ -1113,7 +1169,7 @@ export const register: Register = on => {
     // The main loop's turns take their task from the prompt that started them; a subagent's are its own.
     if (e.agentId === undefined) {
       const current = await loadSettings($)
-      startTurn(e.turnId, current.route ? { easy: current.easy, mid: current.mid, hard: current.hard, limit: current.limit } : undefined)
+      startTurn(e.turnId, current.route ? { easy: current.easy, mid: current.mid, hard: current.hard, limit: current.limit, grading: current.grading, grader: current.grader } : undefined)
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -1374,6 +1430,8 @@ export const register: Register = on => {
             <Select key="mid" label="Mid tasks" value={current.mid} options={TIER_ROUTES} onSelect={value => changeSetting($, 'mid', value)} />
             <Select key="hard" label="Hard tasks" value={current.hard} options={TIER_ROUTES} onSelect={value => changeSetting($, 'hard', value)} />
             <Select key="limit" label="Easy and mid tasks switch up to" value={current.limit} options={LIMITS} onSelect={value => changeSetting($, 'limit', value)} />
+            <Select key="grader" label="Grader" value={current.grader} options={MODELS} onSelect={value => changeSetting($, 'grader', value)} />
+            <Select key="grading" label="Grading" value={current.grading} options={GRADINGS} onSelect={value => changeSetting($, 'grading', value)} />
           </Box>
           {note !== null && (
             <Box key="ownNote">

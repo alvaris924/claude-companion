@@ -46,8 +46,11 @@ type Setup = {
   contextTokens?: number
   /** A model whose requests fail before they answer: with an error, or with no response at all. */
   refused?: { model: string; how: 'throws' | 'no-response' }
-  /** What the grading answers for each new request; "mid" for any other. */
-  grades?: Readonly<Record<string, string>>
+  /**
+   * What the grading answers for each new request, "mid" for any other: one answer for every call, or a list with an
+   * answer for each call in turn. "none" is a call that gives no answer.
+   */
+  grades?: Readonly<Record<string, string | readonly string[]>>
 }
 
 /** What the engine did beneath the plugins, as the tests read it back. */
@@ -76,6 +79,7 @@ type World = {
 function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): World {
   const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused, grades = {} } = setup
   mock.store(on, stored === undefined ? {} : { settings: stored })
+  const callsFor: Record<string, number> = {} // grading calls so far, by the request graded
   const world: World = {
     clock: mock.clock(on, { now: 1_000 }),
     requests: [],
@@ -103,8 +107,12 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     const graded = typeof e.prompt === 'string' ? /<new_request>\n([\s\S]*?)\n<\/new_request>/.exec(e.prompt)?.[1] : undefined
     if (graded !== undefined && typeof e.prompt === 'string') {
       world.graded.push({ model: e.model, effort: e.effort, system: e.system, prompt: e.prompt })
-      if (declinedBy.includes(e.model)) return { value: { isAnswered: false as const, reason: 'empty-reply' as const, usage: NO_USAGE } }
-      return { value: { isAnswered: true as const, text: grades[graded] ?? 'mid', usage: NO_USAGE } }
+      const calls = (callsFor[graded] = (callsFor[graded] ?? 0) + 1)
+      const given = grades[graded]
+      const said = (Array.isArray(given) ? given[calls - 1] : given) ?? 'mid'
+      if (said === 'hang') await world.clock.sleep(60_000) // a call that does not answer in time
+      if (declinedBy.includes(e.model) || said === 'none' || said === 'hang') return { value: { isAnswered: false as const, reason: 'empty-reply' as const, usage: NO_USAGE } }
+      return { value: { isAnswered: true as const, text: said, usage: NO_USAGE } }
     }
     world.requests.push({ model: e.model, effort: e.effort, maxTokens: e.maxTokens, prompt: e.prompt })
     if (lateMs > 0) await world.clock.sleep(lateMs)
@@ -922,6 +930,125 @@ describe('task routing', () => {
     await typed($, QUESTION)
     await runTurn($, 't1', QUESTION, OPUS_MAX)
     expect(world.steps).toEqual([HAIKU_LOW])
+  })
+
+  test('by default a new task is graded with one call', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: ['easy', 'hard'] } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+
+    expect(world.graded.length).toBe(1)
+    expect(world.steps).toEqual([HAIKU_LOW])
+  })
+
+  test('with two calls picked, both grade the task at once and the harder grade is kept', async ($, on) => {
+    const mid = 'add a test for the parser'
+    const world = engine(on, ['terminal'], {
+      stored: { route: true, grading: 'two' },
+      grades: { [QUESTION]: ['easy', 'hard'], [mid]: ['mid', 'easy'] },
+    })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    await typed($, mid)
+    await runTurn($, 't2', mid, SONNET_HIGH)
+
+    expect(world.graded.length).toBe(4)
+    expect(world.steps).toEqual([OPUS_MAX, SONNET_MEDIUM])
+    // Replies are not graded at all, however many calls are picked.
+    await typed($, 'and the tests?')
+    await runTurn($, 't3', 'and the tests?', SONNET_HIGH)
+    expect(world.graded.length).toBe(4)
+  })
+
+  test('with two calls, one that gives no grade leaves the other, and none leaves the rules', async ($, on) => {
+    const hard = 'migrate the store to the new key format'
+    const world = engine(on, ['terminal'], {
+      stored: { route: true, grading: 'two' },
+      grades: { [QUESTION]: ['none', 'easy'], [hard]: ['none', 'none'] },
+    })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    await typed($, hard)
+    await runTurn($, 't2', hard, SONNET_HIGH)
+
+    expect(world.graded.length).toBe(4)
+    expect(world.steps).toEqual([HAIKU_LOW, OPUS_MAX]) // the rules grade the migration hard
+  })
+
+  test('with two calls, a second that hangs holds the task up for 2.5 seconds at most, and a hard grade does not wait at all', async ($, on) => {
+    const hard = 'refactor the config loader into one module per source'
+    const world = engine(on, ['terminal'], {
+      stored: { route: true, grading: 'two' },
+      grades: { [QUESTION]: ['easy', 'hang'], [hard]: ['hard', 'hang'] },
+    })
+
+    await typed($, QUESTION)
+    const slow = runTurn($, 't1', QUESTION, OPUS_MAX)
+    await world.clock.advance(3000)
+    await slow
+    expect(world.steps).toEqual([HAIKU_LOW]) // the first call's grade, once the grace wait ended
+
+    // The first call answers hard: nothing is harder, so the hung second call is not waited for.
+    await typed($, hard)
+    await runTurn($, 't2', hard, SONNET_HIGH)
+    expect(world.steps).toEqual([HAIKU_LOW, OPUS_MAX])
+    await world.clock.advance(60_000) // the hung calls end
+  })
+
+  test('the grading picker is saved from the settings pane and takes effect on the next task', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true }, grades: { [QUESTION]: ['easy', 'hard'] } })
+
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    expect((await pane.find({ key: 'grading' }))?.props.value).toBe('one')
+    await pane.select({ key: 'grading', value: 'two' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'grading' }))?.props.value).toBe('two')
+    await pane.unmount()
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    expect(world.graded.length).toBe(2)
+    expect(world.steps).toEqual([OPUS_MAX]) // easy and hard answered: the harder kept, so Opus
+  })
+
+  test('Sonnet 5.5 grades by default, and the Grader picker changes the model that every grading call uses', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { route: true, grading: 'two' }, grades: { [QUESTION]: 'easy' } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    expect(world.graded.map(call => call.model)).toEqual(['claude-sonnet-5-5', 'claude-sonnet-5-5'])
+
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    expect((await pane.find({ key: 'grader' }))?.props.value).toBe('claude-sonnet-5-5')
+    await pane.select({ key: 'grader', value: 'claude-haiku-5-5' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'grader' }))?.props.value).toBe('claude-haiku-5-5')
+    await pane.unmount()
+
+    const next = 'what does the store keep?'
+    await typed($, next)
+    await runTurn($, 't2', next, OPUS_MAX)
+    expect(world.graded.slice(2).map(call => ({ model: call.model, effort: call.effort }))).toEqual([
+      { model: 'claude-haiku-5-5', effort: 'low' },
+      { model: 'claude-haiku-5-5', effort: 'low' },
+    ])
+  })
+
+  test('where no panel draws, /companion names a grader that is not the default', async ($, on) => {
+    engine(on, NOTHING_DRAWS, { stored: { route: true, grader: 'claude-opus-5-5' } })
+
+    const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    expect(ran.text).toContain('switching at any length; Opus 5.5 grades)')
+  })
+
+  test('where no panel draws, /companion names two-call grading', async ($, on) => {
+    engine(on, NOTHING_DRAWS, { stored: { route: true, grading: 'two' } })
+
+    const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    expect(ran.text).toContain('switching at any length; two grading calls, the harder kept)')
   })
 
   test('a session with a 1M context window keeps it on the model it switches to', async ($, on) => {
