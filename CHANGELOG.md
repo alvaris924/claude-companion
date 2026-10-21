@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- A "Grader" setting for the model that grades new tasks, Sonnet 5.5 by default, at low effort (#26).
+- A "Grading" setting: one call by default, or two calls at once keeping the harder grade, which removes most of the grader's run-to-run noise (about one prompt in eight changed grade between identical runs). A hard grade ends the wait, and once one call has answered the other has 2.5 seconds, so a call that hangs does not hold the task up (#26).
+
 ## [0.10.1] - 2026-10-21
 
 ### Changed

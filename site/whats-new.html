@@ -171,6 +171,7 @@ html { scroll-behavior: smooth; }
   <p class="intro">Companion is a mod for Claude Code that adds small, useful features where you work. Here is what changed lately, and how to use each part.</p>
 
   <ul class="jump" aria-label="Jump to an entry">
+    <li><a href="#grader-choice">Choose the grader</a></li>
     <li><a href="#grader">A grader that leans hard</a></li>
     <li><a href="#calmer-band">A calmer band</a></li>
     <li><a href="#model-per-task">Easy, mid and hard tasks</a></li>
@@ -180,6 +181,22 @@ html { scroll-behavior: smooth; }
     <li><a href="#sonnet-default">Sonnet 5.5 by default</a></li>
     <li><a href="#last-prompt">Your last prompt in view</a></li>
   </ul>
+
+  <section class="day" aria-labelledby="d-21c">
+    <h2 class="date" id="d-21c">21 October 2026 <span class="tag">v0.11.0</span></h2>
+
+    <article id="grader-choice">
+      <h3>Choose the grader, or grade twice</h3>
+      <p>Two new pickers sit in the settings group for each task. <span class="ui">Grader</span> sets the model that sorts a new task into easy, mid or hard: Sonnet 5.5 by default, or Haiku 5.5, Opus 5.5 or Fable 5.1, always at low effort. A stronger grader judges the tasks in between better and costs more per call.</p>
+      <p><span class="ui">Grading</span> can ask twice. Both calls start at once and the harder grade wins, which smooths out the grader changing its mind between runs, about once in eight prompts. A hard grade ends the wait, and once one call has answered the other has 2.5 seconds, so a call that hangs never holds your task up.</p>
+      <ol class="steps">
+        <li><span>Run <code>/companion</code>.</span></li>
+        <li><span>Under the task settings, pick a <span class="ui">Grader</span>, and set <span class="ui">Grading</span> to <span class="ui">Two calls</span> if you want the harder grade.</span></li>
+        <li><span>Send a task. The band shows its grade as before.</span></li>
+      </ol>
+      <p class="note">Two calls cost twice the grading and the same wait. Short replies are never graded.</p>
+    </article>
+  </section>
 
   <section class="day" aria-labelledby="d-21b">
     <h2 class="date" id="d-21b">21 October 2026 <span class="tag">v0.10.1</span></h2>
@@ -276,6 +293,8 @@ html { scroll-behavior: smooth; }
               <div class="r" data-pick><span>Mid tasks</span><span class="v">Sonnet 5.5 at medium effort</span></div>
               <div class="r"><span>Hard tasks</span><span class="v">Opus 5.5 at max effort</span></div>
               <div class="r"><span>Easy and mid tasks switch up to</span><span class="v">No limit</span></div>
+              <div class="r"><span>Grader</span><span class="v">Sonnet 5.5</span></div>
+              <div class="r"><span>Grading</span><span class="v">One call</span></div>
             </div>
             <div class="foot">Sonnet 5.5 grades each new task, as part of your plan’s usage, and the task runs on its grade’s model and effort.</div>
           </div>

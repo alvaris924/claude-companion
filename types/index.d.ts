@@ -19,6 +19,8 @@ export type StoredSettings = {
   mid: string
   hard: string
   limit: string
+  grading: string
+  grader: string
 }
 
 /**
