@@ -1,6 +1,6 @@
 # Companion documentation
 
-Companion is a Claude Code plugin that keeps the person's last prompt in view and suggests their next message as choices they click. This page describes how it behaves and where things live; the decisions behind it are recorded under [adr/](adr/).
+Companion is a mod for Claude Code that adds small, useful features where the person works, and is built to take more. Its first features keep their last prompt in view, suggest their next message as choices they click, and fit the model and effort to each task. This page describes how it behaves and where things live; the decisions behind it are recorded under [adr/](adr/).
 
 ## Layout
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Companion for Claude Code</title>
-<meta name="description" content="A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click. Free and open source.">
+<meta name="description" content="Companion is a mod for Claude Code that adds small, useful features where you work: your last prompt in view, next messages you can click, and the right model for each task. Free and open source.">
 <link rel="canonical" href="https://claudecompanion.vercel.app/">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="color-scheme" content="dark light">
@@ -13,7 +13,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Companion for Claude Code">
 <meta property="og:title" content="Companion for Claude Code">
-<meta property="og:description" content="A Claude Code plugin that keeps your last prompt in view and suggests what you might send next, as choices you click. Free and open source.">
+<meta property="og:description" content="Companion is a mod for Claude Code that adds small, useful features where you work: your last prompt in view, next messages you can click, and the right model for each task. Free and open source.">
 <meta property="og:url" content="https://claudecompanion.vercel.app/">
 <meta name="twitter:card" content="summary">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -148,6 +148,10 @@ h2 { font-size: clamp(30px, 4.4vw, 46px); line-height: 1.08; letter-spacing: -0.
 .term .line { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 .term .taken { color: var(--fg); }
 
+.soon { border-top: 1px solid var(--line); padding-top: 28px; display: grid; gap: 6px; }
+.soon h3 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+.soon p { margin: 0; color: var(--muted); max-width: 62ch; }
+
 /* Where it works */
 .surfaces { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 48px; margin: 0; }
 .surfaces div { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 16px; padding-block: 16px; border-top: 1px solid var(--line); }
@@ -230,8 +234,8 @@ footer a:hover { color: var(--fg); }
 
   <section class="hero" aria-labelledby="headline">
     <a class="announce" href="#route"><span class="tag">New</span><span>The right model for each task</span><span class="go" aria-hidden="true">›</span></a>
-    <h1 id="headline">See what you asked.<br><span class="soft">Click what’s next.</span></h1>
-    <p class="lede">Companion is a Claude Code plugin that keeps your last prompt in view while the answer scrolls, then suggests what you’re likeliest to send next. One click sends it.</p>
+    <h1 id="headline">Your companion<br><span class="soft">for Claude Code.</span></h1>
+    <p class="lede">Companion is a mod for Claude Code. It adds small, useful features right where you work, and it is built to keep taking more. It starts with your last prompt in view, next messages you can click, and the right model for each task.</p>
     <div class="cta">
       <div class="ask">
         <span class="ask-label">Paste into Claude Code to install</span>
@@ -244,7 +248,7 @@ footer a:hover { color: var(--fg); }
 
     <div class="stage">
       <div class="window" data-demo="hero" role="img" aria-label="A Claude Code session: after the answer, Companion shows the last prompt and three suggested next messages above the prompt box">
-        <div class="win-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Claude Code</span></div>
+        <div class="win-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Claude Code, with Companion</span></div>
         <div class="win-body">
           <div class="msg-user" data-user>merge the parser work</div>
           <div class="msg-answer" data-answer>Merged the parser fix into the feature branch, and all 63 tests pass. Want me to open the pull request into dev next?</div>
@@ -265,9 +269,9 @@ footer a:hover { color: var(--fg); }
   </section>
 
   <section class="block" id="features" aria-labelledby="features-h">
-    <p class="kicker">What it does</p>
-    <h2 id="features-h">Small help, right where you type</h2>
-    <p class="section-lede">Companion adds one quiet band above the prompt box. Everything it does happens there, or in a settings pane you open when you want it.</p>
+    <p class="kicker">Features so far</p>
+    <h2 id="features-h">Helpers that live where you work</h2>
+    <p class="section-lede">Companion is a home for helpers inside Claude Code, and these are the first ones. They show up in a quiet band above the prompt box, and you tune them in a settings pane you open when you want it. New features arrive with each release.</p>
 
     <div class="feature">
       <div class="copytext">
@@ -349,10 +353,16 @@ footer a:hover { color: var(--fg); }
     </div>
   </section>
 
+    <div class="soon">
+      <h3>More on the way</h3>
+      <p>Companion grows one feature at a time, and each release lists what it adds. Follow along on <a href="/whats-new">What’s new</a>, or see what is planned in the <a href="https://github.com/alvaris924/claude-companion/milestones">project milestones</a> and suggest something in the <a href="https://github.com/alvaris924/claude-companion/issues/new/choose">issue tracker</a>.</p>
+    </div>
+  </section>
+
   <section class="block" aria-labelledby="where-h">
     <p class="kicker">Where it works</p>
-    <h2 id="where-h">Wherever Claude&nbsp;Code shows plugin&nbsp;UI</h2>
-    <p class="section-lede">It draws with the elements each surface provides, so it fits in wherever you run Claude Code.</p>
+    <h2 id="where-h">Wherever you run Claude&nbsp;Code</h2>
+    <p class="section-lede">Companion draws with the elements each surface provides, so its features fit in wherever you run Claude Code.</p>
     <dl class="surfaces">
       <div><dt>Terminal</dt><dd>The band, cut to your window, and the likeliest suggestion dim in the prompt box.</dd></div>
       <div><dt>VS Code</dt><dd>The band above the prompt box, each suggestion a quiet button.</dd></div>
@@ -381,7 +391,7 @@ footer a:hover { color: var(--fg); }
       <article>
         <div class="figure">0 <small>requests of its own</small></div>
         <h3>No network requests</h3>
-        <p>The plugin calls nothing itself. Settings stay in Claude Code’s plugin store, and your last prompt and the suggestions live only in the session’s state.</p>
+        <p>Companion calls nothing itself. Settings stay in Claude Code’s plugin store, and your last prompt and the suggestions live only in the session’s state.</p>
       </article>
       <article>
         <div class="figure">Sonnet 5.5 <small>by default</small></div>
@@ -404,7 +414,7 @@ footer a:hover { color: var(--fg); }
       <div class="alt">
         <article>
           <h3>Updating</h3>
-          <p>Keep the clone, since the plugin is read from it. Run <code>git pull</code> there, and your next session uses the new code.</p>
+          <p>Keep the clone, since Companion is read from it. Run <code>git pull</code> there, and your next session uses the new code.</p>
         </article>
         <article>
           <h3>Or install it yourself</h3>
@@ -416,7 +426,7 @@ footer a:hover { color: var(--fg); }
   </section>
 
   <footer>
-    <span>Companion · MIT license · An independent, open-source plugin for Claude Code</span>
+    <span>Companion · MIT license · An independent, open-source mod for Claude Code</span>
     <nav aria-label="More">
       <a href="https://github.com/alvaris924/claude-companion">Source</a>
       <a href="/whats-new">What’s new</a>
