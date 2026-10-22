@@ -279,8 +279,7 @@ footer a:hover { color: var(--fg); }
           <div class="demo" data-demo="pickBox" role="img" aria-label="VS Code: a click puts a suggested message in the prompt box, where it can be edited before sending">
             <div class="band">
               <div class="band-label">Companion</div>
-              <div class="row"><div class="quote">merge the parser work</div><div class="more">⋯</div></div>
-              <div class="eyebrow">Suggested</div>
+              <div class="row"><div class="eyebrow" style="flex:1">Suggested</div><div class="more">⋯</div></div>
               <div class="choices">
                 <div class="choice">↳ Open the pull request into dev</div>
                 <div class="choice">↳ Show me the diff first</div>
@@ -307,30 +306,14 @@ footer a:hover { color: var(--fg); }
     <div class="feature">
       <div class="copytext">
         <h3>Your question stays in view</h3>
-        <p>A long answer can push your question off the screen. The band keeps it in sight while you read, without the blocks a host wraps around your words.</p>
-        <p>A pasted image shows as <code>[image]</code>, and <code>/last-prompt</code> brings the prompt and the choices back.</p>
+        <p>A long answer can push your question off the screen. In the terminal the band keeps it in sight while you read, without the blocks a host wraps around your words.</p>
+        <p>VS Code already pins your prompt above its answer, so there the band leaves it out. Turn on <code>Last prompt</code> in <code>/companion</code> to show it in both places. A pasted image shows as <code>[image]</code>, and <code>/last-prompt</code> brings the prompt and the choices back.</p>
       </div>
-      <div class="surface" data-tabs>
-        <div class="tabs" role="tablist" aria-label="Show it in">
-          <button class="tab" type="button" role="tab" id="last-t-vscode" aria-controls="last-p-vscode" aria-selected="true" data-surface="vscode">VS Code</button>
-          <button class="tab" type="button" role="tab" id="last-t-terminal" aria-controls="last-p-terminal" aria-selected="false" tabindex="-1" data-surface="terminal">Terminal</button>
-        </div>
-        <div id="last-p-vscode" role="tabpanel" aria-labelledby="last-t-vscode">
-          <div class="demo" data-demo="last" role="img" aria-label="The band in VS Code showing the last prompt">
-            <div class="band">
-              <div class="band-label">Companion</div>
-              <div class="row"><div class="quote">fix the empty header for new accounts [image]</div><div class="more">⋯</div></div>
-            </div>
-          </div>
-        </div>
-        <div id="last-p-terminal" role="tabpanel" aria-labelledby="last-t-terminal" hidden>
-          <div class="demo" data-demo="last" role="img" aria-label="The band in the terminal showing the last prompt behind a quote bar">
-            <div class="term">
-              <div class="line bar"><span class="quote">fix the empty header for new accounts [image]</span><span class="dim">⋯</span></div>
-              <div class="rule"></div>
-              <div class="line"><span class="acc">&gt;</span></div>
-            </div>
-          </div>
+      <div class="demo" data-demo="last" role="img" aria-label="The band in the terminal showing the last prompt behind a quote bar">
+        <div class="term">
+          <div class="line bar"><span class="quote">fix the empty header for new accounts [image]</span><span class="dim">⋯</span></div>
+          <div class="rule"></div>
+          <div class="line"><span class="acc">&gt;</span></div>
         </div>
       </div>
     </div>
@@ -350,8 +333,7 @@ footer a:hover { color: var(--fg); }
           <div class="demo" data-demo="route" role="img" aria-label="VS Code, on Sonnet 5.5: an easy question offers Haiku 5.5, a click switches it; a hard task then offers Opus 5.5">
             <div class="band">
               <div class="band-label">Companion</div>
-              <div class="row"><div class="quote">what does the config loader do?</div><div class="more">⋯</div></div>
-              <div class="routed">Easy task · Sonnet 5.5 at high effort · <span class="link">Switch to Haiku 5.5 at low effort</span></div>
+              <div class="row"><div class="routed" style="flex:1">Easy task · Sonnet 5.5 at high effort · <span class="link">Switch to Haiku 5.5 at low effort</span></div><div class="more">⋯</div></div>
               <div class="eyebrow">Suggested</div>
               <div class="choices">
                 <div class="choice">↳ Where is the loader called from?</div>
@@ -407,6 +389,13 @@ footer a:hover { color: var(--fg); }
                 <div class="r"><span>Grader</span><span class="v">Sonnet 5.5</span></div>
               </div>
               <div class="foot">A model grades each new task, as part of your plan’s usage. Suggest offers a button when another model would fit; Automatic switches on its own. Each model keeps the mode you pick while the session runs on it.</div>
+            </div>
+            <div class="stack">
+              <div class="group-h">Last prompt</div>
+              <div class="card">
+                <div class="r"><span>Show it in the band in VS Code</span><span class="v">Off</span></div>
+              </div>
+              <div class="foot">VS Code already pins your prompt above its answer, so the band there leaves it out unless this is on. The terminal always shows it.</div>
             </div>
           </div>
         </div>
@@ -716,8 +705,8 @@ footer a:hover { color: var(--fg); }
     },
     route: async function (c) {
       // On Sonnet 5.5: an easy question offers Haiku and one click switches it; a hard task then offers Opus.
-      var quote = c.$('.quote'), routed = c.$('.routed'), list = c.$('.choices');
-      var restPrompt = quote.textContent, restLine = routed.innerHTML;
+      var routed = c.$('.routed'), list = c.$('.choices');
+      var restLine = routed.innerHTML;
       var link = c.$('.routed .link');
       await c.point(link, 0.5, 0.6);
       link.classList.add('is-hover');
@@ -728,14 +717,11 @@ footer a:hover { color: var(--fg); }
       list.classList.add('fade', 'out');
       routed.classList.add('out');
       await c.wait(300);
-      await type(quote, 'split the loader into one module per source', 34);
-      await c.wait(700);
       routed.innerHTML = 'Hard task · Sonnet 5.5 at high effort · <span class="link">Switch to Opus 5.5 at max effort</span>';
       routed.classList.remove('out');
       await c.wait(3000);
       routed.classList.add('out');
       await c.wait(300);
-      quote.textContent = restPrompt;
       routed.innerHTML = restLine;
       routed.classList.remove('out');
       list.classList.remove('out');

@@ -55,6 +55,8 @@ type Setup = {
   sessionModel?: string
   /** Whether a slash command a plugin runs fails, as on a host that does not have it. */
   commandsFail?: boolean
+  /** Run as a prompt is submitted, before the submit resolves: the real engine starts the prompt's turn there. */
+  onSubmit?: (text: string) => Promise<void>
 }
 
 /** What the engine did beneath the plugins, as the tests read it back. */
@@ -91,7 +93,7 @@ type World = {
  * opening (placed wherever a surface attaches), and a Windows host whose processes all succeed.
  */
 function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): World {
-  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused, grades = {}, sessionModel, commandsFail = false } = setup
+  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused, grades = {}, sessionModel, commandsFail = false, onSubmit } = setup
   mock.store(on, stored === undefined ? {} : { settings: stored })
   const callsFor: Record<string, number> = {} // grading calls so far, by the request graded
   const world: World = {
@@ -122,9 +124,10 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     if (e.command === 'model') world.sessionModel = e.args
     return { text: '' }
   })
-  on('prompt.submit', (_, e) => {
+  on('prompt.submit', async (_, e) => {
     world.submitted.push(e.text)
     if (e.origin.kind === 'composer') world.box = '' // the composer empties as it sends
+    if (onSubmit !== undefined) await onSubmit(e.text)
     return { text: e.text }
   })
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
@@ -266,9 +269,13 @@ describe('companion', () => {
 
     await $.prompt.submit({ text: 'rename the\nconfig loader   please', wait: false, origin: { kind: 'composer' } })
 
-    for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
+    const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await promptShown(terminal)).toBe('rename the config loader please')
+    await terminal.unmount()
+    // VS Code pins the prompt above its answer itself, so there the band leaves it out unless asked to show it.
+    for (const surface of ['desktop', 'vscode'] as const) {
       const band = await $.ui.mount({ ...BAND, surface })
-      expect(await promptShown(band)).toBe('rename the config loader please')
+      expect(await promptShown(band)).toBeUndefined()
       await band.unmount()
     }
   })
@@ -420,7 +427,7 @@ describe('companion', () => {
   })
 
   test('with suggestions switched off no model is asked, and the band keeps the last prompt', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { suggest: false } })
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { suggest: false, lastPrompt: true } })
 
     await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
     await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
@@ -434,7 +441,7 @@ describe('companion', () => {
   })
 
   test('the look: the last prompt as a quote, the choices as quiet buttons, the settings in rounded cards', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false })
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { lastPrompt: true } })
 
     await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
     await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
@@ -460,12 +467,12 @@ describe('companion', () => {
     await terminal.unmount()
 
     const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
-    for (const key of ['suggestCard', 'routeCard']) expect((await pane.find({ key }))?.props.borderStyle).toBe('round')
+    for (const key of ['suggestCard', 'routeCard', 'promptCard']) expect((await pane.find({ key }))?.props.borderStyle).toBe('round')
     await pane.unmount()
   })
 
   test('a prompt full of markdown is drawn as typed: nothing in it formats or links', async ($, on) => {
-    engine(on, ['vscode'], { showsSuggestions: false })
+    engine(on, ['vscode'], { showsSuggestions: false, stored: { lastPrompt: true } })
     const typed = '**bold** _it_ [a link](https://example.com) `code` # not a heading > nor a quote | 1. 2.'
 
     await $.prompt.submit({ text: typed, wait: false, origin: { kind: 'composer' } })
@@ -479,7 +486,7 @@ describe('companion', () => {
   })
 
   test('/companion opens the settings pane, and so does the ⋯ in the band', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false })
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { lastPrompt: true } })
 
     const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
     expect(ran.text).toBe('Companion settings opened.')
@@ -574,7 +581,7 @@ describe('companion', () => {
       'Show me the diff for the last commit before anything else',
       'Write the settings table and push it with the release',
     ]
-    const world = engine(on, ['vscode'], { answer: long.join('\n'), showsSuggestions: false })
+    const world = engine(on, ['vscode'], { answer: long.join('\n'), showsSuggestions: false, stored: { lastPrompt: true } })
     const narrow = { ...BAND, props: { ...BAND.props, bodyColumns: 42 } } // what VS Code 2.1.300 reported
 
     const typed = 'the band looks great, but it does not show the full messages, so check the cut again please'
@@ -604,7 +611,7 @@ describe('companion', () => {
   })
 
   test('the last prompt leaves out the blocks a host wraps around what the person typed', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false })
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { lastPrompt: true } })
     const sent =
       '<browser_instruction>\nInstructions a browser extension adds.\n</browser_instruction>' +
       'looks great but not showing full messages\n[Image: source: /tmp/screenshot.png]\ncheck again'
@@ -627,7 +634,7 @@ describe('companion', () => {
   })
 
   test('pressing a choice sends it as the person, it becomes the last prompt, and the choices go', async ($, on) => {
-    const world = engine(on, ['vscode'], { showsSuggestions: false })
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { lastPrompt: true } })
 
     await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
     await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
@@ -907,15 +914,16 @@ describe('working the mod from the keyboard', () => {
 
     const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
     expect(ran.text).toBe('Companion settings opened.')
-    expect(world.openedWith).toEqual([{ id: SETTINGS, title: 'Companion settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 22 }])
+    expect(world.openedWith).toEqual([{ id: SETTINGS, title: 'Companion settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 24 }])
   })
 
   test('the terminal menu: a row per setting with its value, the ring starting on the first, and keys said under it', async ($, on) => {
     engine(on, ['terminal'], { stored: { route: true } })
 
     const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
-    const rows = ['suggest', 'model', 'effort', 'choices', 'onPress', 'numberKeys', 'fit', 'easy', 'mid', 'hard', 'limit', 'grader', 'grading']
+    const rows = ['suggest', 'model', 'effort', 'choices', 'onPress', 'numberKeys', 'fit', 'easy', 'mid', 'hard', 'limit', 'grader', 'grading', 'lastPrompt']
     for (const field of rows) expect(await menu.find({ key: `setting-${field}` })).toBeDefined()
+    expect((await menu.find({ key: 'setting-lastPrompt' }))?.text).toBe(`${'In VS Code'.padEnd(24)}Off`)
     expect((await menu.find({ key: 'setting-suggest' }))?.props.autoFocus).toBe(true)
     expect((await menu.find({ key: 'setting-fit' }))?.text).toBe(`${'Fit to each task'.padEnd(24)}Automatic`)
     expect((await menu.find({ key: 'setting-easy' }))?.text).toBe(`${'Easy tasks'.padEnd(24)}Haiku 5.5 at low effort`)
@@ -2138,6 +2146,27 @@ describe('suggest mode', () => {
 })
 
 describe('a prompt sent while the answer runs', () => {
+  test('a turn the engine starts inside the prompt submit, as the real engine does, still gets its choices', async ($, on) => {
+    const holder: { world?: World } = {}
+    let started = false
+    const world = engine(on, ['terminal'], {
+      stored: { fit: 'off' },
+      onSubmit: async text => {
+        if (started) return
+        started = true
+        await $.turn.start({ text, turnId: 't1' }) // the turn begins before the submit hook resumes
+        await holder.world?.clock.advance(5)
+      },
+    })
+    holder.world = world
+
+    await typed($, 'first question')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    expect(world.requests.length).toBe(1)
+    expect(world.requests[0]?.prompt).toContain('first question')
+  })
+
   test('is the next message already: no choices are asked for that answer, and the next answer gets its own', async ($, on) => {
     const world = engine(on, ['terminal'], { stored: { fit: 'off' } })
 
@@ -2165,5 +2194,85 @@ describe('a prompt sent while the answer runs', () => {
     const done = await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
     expect(done.text).toBe(REPLY)
     expect(world.requests).toEqual([])
+  })
+})
+
+describe('the last prompt outside the terminal', () => {
+  const HARD = 'implement the export command for the settings'
+
+  test('off by default: the band leaves the prompt to VS Code, and the ⋯ ends the "Suggested" row', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false })
+
+    await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
+    // Nothing else to show yet: the band draws nothing at all.
+    const before = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    expect(await before.find({ key: 'settings' })).toBeUndefined()
+    await before.unmount()
+
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    for (const surface of ['vscode', 'desktop'] as const) {
+      const band = await $.ui.mount({ ...BAND, surface })
+      expect(await band.find({ key: 'prompt' })).toBeUndefined()
+      expect(await choicesDrawn(band)).toEqual([...CHOICES])
+      const head = await band.find({ key: 'head' })
+      expect(head?.text).toContain('Suggested')
+      expect((await band.find({ key: 'settings' }))?.props.label).toBe('⋯')
+      await band.press({ key: 'settings' })
+      await band.unmount()
+    }
+    expect(world.opened).toEqual([SETTINGS, SETTINGS])
+
+    // The terminal, where nothing pins the prompt, keeps it.
+    const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await promptShown(terminal)).toBe('merge the parser work')
+    await terminal.unmount()
+  })
+
+  test('with a model line and no quote, the ⋯ ends the model line', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, grades: { [HARD]: 'hard' } })
+    await typed($, HARD)
+    await $.turn.start({ text: HARD, turnId: 't1' })
+    await step($, { turnId: 't1', index: 0, messageCount: 1, ...SONNET_HIGH })
+    await world.clock.advance(1)
+
+    const band = await $.ui.mount({ ...BAND, surface: 'vscode', props: { ...BAND.props, isWorking: true } })
+    expect(await band.find({ key: 'prompt' })).toBeUndefined()
+    expect(plainOf((await band.find({ key: 'fitHead' }))?.text ?? '')).toContain('Hard task · Sonnet 5.5 at high effort · Switch to Opus 5.5 at max effort')
+    expect(await band.find({ key: 'settings' })).toBeDefined()
+    await band.unmount()
+  })
+
+  test('turned on, VS Code shows the prompt on one line again', async ($, on) => {
+    engine(on, ['vscode'], { stored: { lastPrompt: true } })
+    await $.prompt.submit({ text: 'rename the\nconfig loader   please', wait: false, origin: { kind: 'composer' } })
+
+    for (const surface of ['desktop', 'vscode'] as const) {
+      const band = await $.ui.mount({ ...BAND, surface })
+      expect(await promptShown(band)).toBe('rename the config loader please')
+      expect(await band.find({ key: 'head' })).toBeUndefined() // the ⋯ is back on the prompt's row
+      await band.unmount()
+    }
+  })
+
+  test('the setting is off unless stored on, and both the pane and the terminal menu change it', async ($, on) => {
+    expect(settingsFrom({}).lastPrompt).toBe(false)
+    expect(settingsFrom({ lastPrompt: true }).lastPrompt).toBe(true)
+    expect(settingsFrom({ lastPrompt: 'yes' }).lastPrompt).toBe(false)
+    expect(storedOf(settingsFrom({ lastPrompt: true }))).toMatchObject({ lastPrompt: true })
+
+    engine(on, ['vscode'])
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    expect((await pane.find({ key: 'lastPrompt' }))?.props).toMatchObject({ value: 'off', label: 'Show it in the band in VS Code' })
+    await pane.select({ key: 'lastPrompt', value: 'on' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'lastPrompt' }))?.props.value).toBe('on')
+    await pane.unmount()
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    expect((await menu.find({ key: 'setting-lastPrompt' }))?.text).toBe(`${'In VS Code'.padEnd(24)}On`)
+    await menu.press({ key: 'setting-lastPrompt' })
+    expect((await menu.find({ key: 'setting-lastPrompt' }))?.text).toBe(`${'In VS Code'.padEnd(24)}Off`)
+    await menu.unmount()
   })
 })

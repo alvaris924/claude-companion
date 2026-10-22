@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Changed
+
+- In VS Code the band no longer repeats your last prompt, since VS Code pins it above its answer. A "Last prompt" setting in `/companion` brings it back; the terminal always shows it. The ⋯ for the settings moves to the end of the band's first row ([ADR-0016](docs/adr/0016-the-band-leaves-the-prompt-to-vs-code.md), #38).
+
+### Fixed
+
+- No suggestions appeared after any answer in 0.12.0. Its check for a message sent while an answer was still running compared timestamps, but the engine starts a prompt's turn before the plugin finishes recording that prompt, so every prompt looked like it came during its own answer. The check now notes, the moment a message is sent, whether an answer is still running (#38).
+
 ## [0.12.0] - 2026-10-22
 
 ### Added

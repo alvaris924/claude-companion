@@ -18,6 +18,7 @@ export type StoredSettings = {
   choices: string
   onPress: string
   numberKeys: boolean
+  lastPrompt: boolean
   fit: string
   fitByModel: Partial<Record<'haiku' | 'sonnet' | 'opus' | 'fable', string>>
   route: boolean
