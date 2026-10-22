@@ -5,8 +5,11 @@ export type LastPrompt = { text: string; at: number; isFromProgram: boolean }
 export type Suggestion = { choices: string[]; at: number }
 
 /**
- * The settings as the settings pane saves them in the plugin's store: each picker's value. `route` fits each task's
- * model and effort to its grade; `easy`, `mid` and `hard` name each grade's as "model:effort", or "own".
+ * The settings as the settings pane saves them in the plugin's store: each picker's value. `fit` is how each task's
+ * model and effort follow its grade: "suggest" (offers a switch, changes nothing), "auto" or "off"; `route` is the same
+ * as a switch, "auto" or not, kept for sessions still on a version before 0.12.0; `fitByModel` is the mode picked
+ * while the session ran on each family of models, which `fit` stands in for where none was picked; `easy`, `mid` and
+ * `hard` name each grade's as "model:effort", or "own".
  */
 export type StoredSettings = {
   suggest: boolean
@@ -14,6 +17,9 @@ export type StoredSettings = {
   effort: string
   choices: string
   onPress: string
+  numberKeys: boolean
+  fit: string
+  fitByModel: Partial<Record<'haiku' | 'sonnet' | 'opus' | 'fable', string>>
   route: boolean
   easy: string
   mid: string
@@ -26,7 +32,10 @@ export type StoredSettings = {
 /**
  * A turn fitted to its task: the task's grade, the model and effort its requests went with, and the session's own
  * model and effort they would have gone with, the same where the grade keeps them. An effort is null where the request
- * named none.
+ * named none. A suggestion (`isSuggestion`) is the other way round: the turn ran on the session's own model and effort,
+ * and `model` and `effort` are what the grade names, which a press switches the task to; with `switchesSession`, that
+ * model's mode is Automatic and a press switches the session to it, as /model does. A task sent on (`isOnward`) ran on
+ * its own model and effort, and its follow-ups go to `model` and `effort`.
  */
 export type RoutedTurn = {
   level: 'easy' | 'mid' | 'hard'
@@ -35,6 +44,9 @@ export type RoutedTurn = {
   ownModel: string
   ownEffort: string | null
   isKept: boolean
+  isSuggestion: boolean
+  switchesSession?: boolean
+  isOnward?: boolean
   at: number
 }
 
@@ -53,6 +65,12 @@ declare module 'claude-code' {
       routed: RoutedTurn | null
       /** The session's own model and effort as its last main-loop turn began; null until the first request. */
       own: OwnRequest | null
+      /** The session's model as /model shows it, read at each turn and as the settings open; null until read. */
+      sessionModel: string | null
+      /** The terminal's settings menu: "list", or the setting whose options it shows. */
+      menu: string
+      /** The key of what the terminal settings menu's ring is on: a row, or an option of the setting open; null at first. */
+      menuFocus: string | null
     }
   }
 }

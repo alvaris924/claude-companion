@@ -24,19 +24,26 @@ import type { LastPrompt, OwnRequest, RoutedTurn, StoredSettings, Suggestion } f
 // person's own words, or puts it in the prompt box to edit. The likeliest is also offered dim in the prompt box where
 // the box shows suggestions (the terminal), Tab to take; VS Code 2.1.300 shows none there.
 //
-// Task routing, off by default: Sonnet 5.5 grades each new task of the person's easy, mid or hard, and a turn.step
-// hook sends the task's requests with that grade's model and effort (Haiku 5.5 low, Sonnet 5.5 medium and Opus 5.5 max
-// unless picked otherwise), at any length of conversation. A reply or a short follow-up keeps the running task's grade
-// with no call, and rules grade a task the model gives no answer for. The band says what every fitted turn runs on,
-// with a link that asks the prompt again as usual where it ran on something else.
+// Task routing, in three modes: Sonnet 5.5 grades each new task of the person's easy, mid or hard. Suggest, the default
+// since 0.12.0, changes nothing: the turn runs on the session's own model and effort, the grade is asked in the
+// background, and when the grade names another model than the one running, up for a hard task or down for an easy one,
+// the band offers one button that stops the answer and asks the prompt again there, or once the answer is in and the
+// pick is cheaper, sends the task's follow-ups there. Automatic sends the task's requests with that grade's model and effort (Haiku
+// 5.5 low, Sonnet 5.5 medium and Opus 5.5 max unless picked otherwise), at any length of conversation, and the band
+// says what each turn runs on, with a link that asks the prompt again as usual where it ran on something else. Off does
+// neither. A reply or a short follow-up keeps the running task's grade with no call, and rules grade a task the model
+// gives no answer for.
 //
 // The look, after Apple's developer pages and quiet note apps: the last prompt as a quote, secondary text dimmed, the
 // choices as quiet buttons with a ↳, and a type scale for the rest. VS Code and the desktop app draw every Button in
 // their own chrome, so the choices ask for the secondary one (dark in VS Code) rather than the filled one. Colours are
-// theme keys, so a dark theme and a light one each draw it in their own; the terminal keeps one size and its row of
-// buttons.
+// theme keys, so a dark theme and a light one each draw it in their own.
 //
-// Settings: suggestions on or off, the model, its effort, how many choices, what a click does. /companion, or the ⋯ in
+// The terminal reports no pointer outside fullscreen, so everything there works from the keys, the way Claude Code's
+// own surveys and menus do: the choices are numbered and a number typed into the empty prompt box picks one (0 asks
+// again as usual), and the settings are a menu that takes the keys as it opens, a row per setting.
+//
+// Settings: suggestions on or off, the model, its effort, how many choices, what a pick does. /companion, or the ⋯ in
 // the band, opens a settings pane; each pick goes to this mod's own store ($.store), kept across sessions and read
 // afresh wherever a setting is used, so other open sessions take it at their next answer. (plugin.json userConfig
 // was tried: an SDK host such as VS Code lists no /config row for it, so $.config.set cannot write it there.)
@@ -73,8 +80,17 @@ const DOCS_URL = 'https://github.com/alvaris924/claude-companion/blob/main/docs/
 export const REDO_HREF = `${DOCS_URL}?redo=1#the-model-and-effort-for-each-task`
 const SUGGEST_NOTE = 'Written after each answer by the model above, as part of your plan’s usage.'
 const ROUTE_NOTE =
-  'Sonnet 5.5 grades each new task, as part of your plan’s usage, and the task runs on its grade’s model and effort. ' +
-  'A switch makes the new model read the conversation once without its cache.'
+  'A model grades each new task, as part of your plan’s usage. Suggest changes nothing and offers a button to switch ' +
+  'when another model would fit; Automatic runs the task on its grade’s model and effort. Each model keeps the ' +
+  'mode you pick while the session runs on it. A switch makes the new model read the conversation once without its cache.'
+// The terminal's keys, said the way Claude Code's own dialogs say theirs.
+const MENU_KEYS = '↑↓ to move · Enter to change · Esc to close'
+const OPTION_KEYS = '↑↓ to move · Enter or its number to pick · Esc to close'
+const BAND_FOCUS_HINT = 'ctrl+x tab, then ↑↓ and Enter to pick'
+const SETTINGS_HINT = '/companion for settings'
+const HOTKEY_COLUMNS = 3 // "1: " before a numbered choice
+const MENU_LABEL_COLUMNS = 24
+const MENU_ROWS = 22 // the menu's rows, its longest view's, asked of the terminal as the pane opens
 const SAVED_NOTE = 'Saved for every session; other open sessions take a change at their next turn.'
 const LAST_MAX_CHARS = 160 // about two lines where the surface wraps the last prompt
 const PANE_MAX_CHARS = 600
@@ -106,6 +122,7 @@ const LIST_MARKER = /^\s*(?:[-*•]|\d+[.):])\s+/
 const INJECTED_BLOCK = /<([a-z][a-z0-9]*(?:[_-][a-z0-9]+)+)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi
 // A pasted image's marker in the prompt text: its file path is no part of what the person said.
 const IMAGE_MARKER = /\[Image(?:: source: [^\]]*)?\]/g
+const IMAGE_NOTE = '[image]' // what an image's marker becomes in the words kept of a prompt
 // The form the model is shown, one reply ending per example, its likeliest next messages first.
 const EXAMPLES: readonly { end: string; lines: readonly string[] }[] = [
   {
@@ -190,12 +207,26 @@ const REPLY_MAX_WORDS = 3
 // What a reply may lead with before it says what it wants: a yes, an "ok", a "please", a "let's".
 const REPLY_LEAD =
   /^(?:(?:yes|yep|yeah|yup|sure|ok(?:ay)?|alright|all right|great|cool|nice|perfect|good|fine|done|so|and|also|now|then|hey|please|pls|just|can you|could you|would you|will you|can we|could we|let'?s)\b[\s,.!:;]*)+/i
+// Experimental since 0.12.0: a short message used to continue the running task on word count alone, which read an
+// unrelated short message, "how are you" among them, as a reply and never graded it. Stripped of a leading
+// acknowledgement, what is left must still lean on the last answer, not stand on its own.
+const ACK_LEAD =
+  /^(?:(?:yes|yep|yeah|yup|sure|ok(?:ay)?|alright|all right|great|cool|nice|perfect|good|fine|done|thanks|thank you|thx|well|hmm)\b[\s,.!:;]*)+/i
+const CONTINUES =
+  /^(?:but\s+|and\s+|so\s+|also\s+|why\b|how come\b|how so\b|what about\b|go on\b|go ahead\b|keep going\b|continue\b|makes sense\b|sounds good\b|got it\b)/i
 // Past that, an order leads with a verb that changes or runs something, or with a go-ahead: after an easy question it
 // is work of its own, not part of the question.
 const ORDER_LEAD =
   /^(?:(?:add|fix|change|make|update|remove|delete|drop|rename|move|create|write|edit|build|run|test|try|check|commit|push|merge|squash|open|close|apply|revert|undo|deploy|ship|release|install|uninstall|set|turn|enable|disable|replace|bump|restore|keep|use|pr|proceed|continue|start|finish)\b|do (?:it|that|this|both|all|them|so)\b|go(?: ahead\b| for\b|[.!]*$))/i
 // A yes takes up what the answer offered, which is work too, unless it comes with a question of its own.
 const YES = /^(?:yes|yep|yeah|yup|sure)\b/i
+
+/** What the grade of a task does: Suggest offers a switch and changes nothing, Automatic switches, Off does neither. */
+type FitMode = 'suggest' | 'auto' | 'off'
+
+const MODEL_FAMILIES = ['haiku', 'sonnet', 'opus', 'fable'] as const
+/** A family of models, weakest first: the mode of fitting is kept for each. */
+type ModelFamily = (typeof MODEL_FAMILIES)[number]
 
 /** The settings the pane changes; stored as their pickers' values (`choices` as text, the switches as booleans). */
 type Settings = {
@@ -204,8 +235,12 @@ type Settings = {
   effort: 'low' | 'medium' | 'high'
   choices: number
   onPress: 'send' | 'box'
-  /** Whether each task's turns run on the model and effort its grade's picker names. */
-  route: boolean
+  /** Whether a number typed into the terminal's empty prompt box picks that choice. */
+  numberKeys: boolean
+  /** How each task's model and effort follow its grade: suggested (a button), switched on its own, or left alone. */
+  fit: FitMode
+  /** The mode picked while the session ran on each family, which `fit` stands in for where none was. */
+  fitByModel: Partial<Record<ModelFamily, FitMode>>
   /** Each grade's model and effort, as "model:effort", or OWN_ROUTE for the session's own. */
   easy: string
   mid: string
@@ -238,6 +273,13 @@ const ON_OFF: readonly SelectOption[] = [
   { value: 'on', label: 'On' },
   { value: 'off', label: 'Off' },
 ]
+// Suggest is the default since 0.12.0 (2026-10-22): the model's grade never changes a task's model on its own.
+const FIT_MODES: readonly SelectOption[] = [
+  { value: 'suggest', label: 'Suggest: you press to switch' },
+  { value: 'auto', label: 'Automatic: switches on its own' },
+  { value: 'off', label: 'Off' },
+]
+const DEFAULT_FIT: FitMode = 'suggest'
 // What a grade's task runs on: a model at an effort, or the session's own.
 const OWN_ROUTE = 'own'
 const TIER_ROUTES: readonly SelectOption[] = [
@@ -278,6 +320,11 @@ const paneClosed = atom({ plugin: 'companion', key: 'paneClosed' } as const, fal
 const savedSettings = atom({ plugin: 'companion', key: 'settings' } as const, null)
 const routed = atom({ plugin: 'companion', key: 'routed' } as const, null)
 const own = atom({ plugin: 'companion', key: 'own' } as const, null)
+const sessionModel = atom({ plugin: 'companion', key: 'sessionModel' } as const, null)
+// The terminal's settings menu: the list, or the options of the setting it names; and the element the ring is on.
+const MENU_LIST = 'list'
+const menuView = atom({ plugin: 'companion', key: 'menu' } as const, MENU_LIST)
+const menuFocus = atom({ plugin: 'companion', key: 'menuFocus' } as const, null)
 
 // Prompts the machine sends on its own. Every other origin (the composer, the bridge, the SDK host,
 // an unclassified channel such as an editor extension) is the person typing.
@@ -309,12 +356,15 @@ export type TaskLevel = 'easy' | 'mid' | 'hard'
 /** What the grading reads: the request that starts a task, the one before it, and the end of the last answer. */
 export type ToGrade = { prompt: string; before: string; reply: string }
 /**
- * The running task: its grade (the rules' until the model's comes), what the model is still to grade, and whether it
- * was asked again as usual, which keeps its turns on the session's own model and effort.
+ * The running task: its grade (the rules' until the model's comes), what the model is still to grade, whether it was
+ * asked again as usual, which keeps its turns on the session's own model and effort, and whether the person switched it
+ * to its grade's model and effort, which keeps its turns there as Automatic would.
  */
-type Task = { level: TaskLevel; toGrade?: ToGrade; asUsual?: boolean }
+type Task = { level: TaskLevel; toGrade?: ToGrade; asUsual?: boolean; isSwitched?: boolean }
 /** What the settings give each grade. */
 type Routes = Pick<Settings, 'easy' | 'mid' | 'hard' | 'limit' | 'grading' | 'grader'>
+/** What a turn is fitted by: the routes, and whether the grade only suggests a switch or makes it. */
+type TurnRoutes = Routes & { fit: Exclude<FitMode, 'off'> }
 /** The model and effort a fitted turn's requests go with, beside the session's own that its first request named. */
 type Plan = {
   level: TaskLevel
@@ -326,22 +376,31 @@ type Plan = {
   isKept: boolean
 }
 /** A main-loop turn the settings fit: its task, the routes, and its plan once its first request decided one. */
-type FittedTurn = { task: Task; routes: Routes; plan?: Plan | null }
+type FittedTurn = { task: Task; routes: TurnRoutes; plan?: Plan | null }
 /**
  * What the next turn takes from the prompt that starts it: its task (the rules' grade, whether a task starts, what the
- * model grades, and whether it was asked again as usual), or nothing (a command, a program).
+ * model grades, whether it was asked again as usual, and whether the person switched it), or nothing (a command, a
+ * program).
  */
-type Pending = { kind: 'task'; level: TaskLevel; isNew: boolean; toGrade: ToGrade; asUsual?: boolean } | { kind: 'skip' }
+type Pending =
+  | { kind: 'task'; level: TaskLevel; isNew: boolean; toGrade: ToGrade; asUsual?: boolean; isSwitched?: boolean }
+  | { kind: 'skip' }
 
 // The task the person is on, and what their last prompt asked of the next turn; undefined continues the task.
 let task: Task | null = null
 let pending: Pending | undefined
 // The main-loop turns being fitted, by turn id, until they complete.
 const fitted = new Map<string, FittedTurn>()
+// The main loop's running turn, whatever the settings: what a switch stops to ask the prompt again.
+let runningTurn: string | undefined
+// When each main-loop turn began, so a prompt sent while its answer ran is known as the next message already.
+const turnStarts = new Map<string, number>()
 // Set once a fitted request failed before it answered: the rest of the session's turns go as the engine makes them.
 let isFitRefused = false
 // The session's own model and effort as last written to state, so a turn writes them again only when they change.
 let ownKey = ''
+// The session's model as /model shows it, as last written to state; null until it is read.
+let sessionModelKey: string | null = null
 // The last main-loop answer, whose end the grading of the next task reads.
 let lastReply = ''
 
@@ -358,7 +417,10 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
     effort: pick(stored.effort, EFFORTS, 'low') as Settings['effort'],
     choices: Number(pick(stored.choices, CHOICE_COUNTS, '3')),
     onPress: pick(stored.onPress, PRESS_ACTIONS, 'send') as Settings['onPress'],
-    route: typeof stored.route === 'boolean' ? stored.route : false,
+    numberKeys: typeof stored.numberKeys === 'boolean' ? stored.numberKeys : true,
+    // A store from before 0.12.0 holds the old switch: its "on" is Automatic, and its "off" stays off.
+    fit: pick(stored.fit, FIT_MODES, typeof stored.route === 'boolean' ? (stored.route ? 'auto' : 'off') : DEFAULT_FIT) as FitMode,
+    fitByModel: fitsFrom(stored.fitByModel),
     easy: pick(stored.easy, TIER_ROUTES, DEFAULT_ROUTES.easy),
     mid: pick(stored.mid, TIER_ROUTES, DEFAULT_ROUTES.mid),
     hard: pick(stored.hard, TIER_ROUTES, DEFAULT_ROUTES.hard),
@@ -368,9 +430,33 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
   }
 }
 
-/** The settings as the store keeps them. */
+/** The mode kept for each family, from what the store holds: a family or a mode it does not know is left out. */
+function fitsFrom(stored: unknown): Settings['fitByModel'] {
+  const fits: Settings['fitByModel'] = {}
+  if (typeof stored !== 'object' || stored === null) return fits
+  for (const family of MODEL_FAMILIES) {
+    const mode = (stored as Record<string, unknown>)[family]
+    if (typeof mode === 'string' && FIT_MODES.some(option => option.value === mode)) fits[family] = mode as FitMode
+  }
+  return fits
+}
+
+/** The family of a model however it is spelled ("claude-opus-5-5[1m]", "opus", "Opus 5.5"); null for one it cannot tell. */
+export function familyOf(model: string | null): ModelFamily | null {
+  if (model === null) return null
+  const name = model.toLowerCase()
+  return MODEL_FAMILIES.find(family => new RegExp(`(?:^|[^a-z])${family}(?:[^a-z]|$)`).test(name)) ?? null
+}
+
+/** The mode of fitting on a model: the one picked while the session ran on its family, else `fit`. */
+export function fitFor(current: Pick<Settings, 'fit' | 'fitByModel'>, model: string | null): FitMode {
+  const family = familyOf(model)
+  return (family === null ? undefined : current.fitByModel[family]) ?? current.fit
+}
+
+/** The settings as the store keeps them; `route` is `fit` as the switch a session before 0.12.0 reads. */
 export function storedOf(current: Settings): StoredSettings {
-  return { ...current, choices: String(current.choices) }
+  return { ...current, choices: String(current.choices), route: current.fit === 'auto' }
 }
 
 /** The settings the store holds now, a pick in another session included; null where it cannot be read. */
@@ -413,9 +499,19 @@ export function tiersOf(current: Routes): string[] {
   return (['easy', 'mid', 'hard'] as const).map(level => `${level} tasks: ${labelOf(TIER_ROUTES, current[level])}`)
 }
 
-/** The settings on one line of plain text, for a host that draws no pane. */
+/**
+ * What a mode of fitting is set to, in words: each grade's pick; Automatic adds the limit, since a switch of its own
+ * reads the conversation uncached, and both add the grading when it is not the default.
+ */
+function fitDetails(current: Settings): string[] {
+  const parts = [...tiersOf(current), current.fit === 'auto' ? limitLine(current) : null, gradingLine(current)]
+  return parts.filter(part => part !== null)
+}
+
+/** The settings on one line of plain text, for a host that draws no pane; `current.fit` is the mode on the session's model. */
 export function settingsLine(current: Settings): string {
-  const routing = current.route ? `on (${[...tiersOf(current), limitLine(current), gradingLine(current)].filter(part => part !== null).join('; ')})` : 'off'
+  const names: Record<FitMode, string> = { suggest: 'suggest', auto: 'automatic', off: 'off' }
+  const routing = current.fit === 'off' ? 'off' : `${names[current.fit]} (${fitDetails(current).join('; ')})`
   return (
     `Suggestions: ${current.suggest ? 'on' : 'off'} · Model: ${labelOf(MODELS, current.model)} · ` +
     `Effort: ${current.effort} · Choices: ${current.choices} · Clicking a choice: ${labelOf(PRESS_ACTIONS, current.onPress)} · ` +
@@ -437,7 +533,8 @@ export function suggestionsLine(current: Settings): string {
 
 /** The routing settings in one line, as the mobile pane lists them. */
 export function routingLine(current: Settings): string {
-  return current.route ? ['On', ...tiersOf(current), limitLine(current), gradingLine(current)].filter(part => part !== null).join(' · ') : 'Off'
+  const name = current.fit === 'auto' ? 'Automatic' : current.fit === 'suggest' ? 'Suggest' : 'Off'
+  return current.fit === 'off' ? name : [name, ...fitDetails(current)].join(' · ')
 }
 
 /** One line of at most `max` characters: whitespace runs (line breaks included) become one space. */
@@ -448,7 +545,7 @@ export function oneLine(text: string, max: number): string {
 
 /** What the person typed, without the blocks a host wraps around it; an image's marker becomes "[image]". */
 export function ownWords(text: string): string {
-  return text.replace(INJECTED_BLOCK, ' ').replace(IMAGE_MARKER, '[image]').trim()
+  return text.replace(INJECTED_BLOCK, ' ').replace(IMAGE_MARKER, IMAGE_NOTE).trim()
 }
 
 /** One line of the model's reply cut to a message: no list marker, quotes or "Next:" lead-in; empty when it is meta. */
@@ -633,16 +730,57 @@ export async function putInBox($: EngineInterface, text: string, choices: readon
   $.ui.toast(isCopied ? 'Copied: paste it into the box.' : `Could not put it in the box: ${text}`)
 }
 
-/** Opens the settings pane on the settings the store holds now; false where no surface draws one. */
+/**
+ * Opens the settings pane on the settings the store holds now, at its list; false where no surface draws one. It asks
+ * for the keys, which the terminal grants over an empty prompt box (after /companion), and for the rows the menu
+ * takes, where a pane otherwise opens a third of the terminal tall; Esc closes it.
+ */
 export async function openSettings($: EngineInterface): Promise<boolean> {
   await loadSettings($)
-  return (await $.ui.open({ id: SETTINGS_PANE, title: SETTINGS_TITLE })).isPlaced
+  await noteSessionModel($)
+  await update($, menuView, () => MENU_LIST)
+  await update($, menuFocus, () => null)
+  const opened = await $.ui.open({ id: SETTINGS_PANE, title: SETTINGS_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: MENU_ROWS })
+  return opened.isPlaced
 }
 
-/** A pick in the settings pane: saved in the store for every session, in force at once, and drawn back. */
+/** The settings a drawing shows: from `$.state`, so a pick redraws it; before the first load, what the store holds. */
+async function shownSettings($: EngineInterface): Promise<Settings> {
+  const drawn = await read($, savedSettings)
+  return drawn !== null ? settingsFrom(drawn) : ((await readSettings($)) ?? settings)
+}
+
+/**
+ * The session's model as /model shows it, kept in state for the settings to draw: read afresh, since /model changes it
+ * between turns. Where it cannot be read, the last one read; null before any.
+ */
+export async function noteSessionModel($: EngineInterface): Promise<string | null> {
+  try {
+    const model = await $.session.model()
+    if (typeof model === 'string' && model.length > 0 && model !== sessionModelKey) {
+      await update($, sessionModel, () => model)
+      sessionModelKey = model
+    }
+  } catch {
+    // an engine without the call, or a failed read: the mode for every model stands where no model is known
+  }
+  return sessionModelKey
+}
+
+/** The settings as the pane shows them on the session's model: `fit` is the mode kept for its family. */
+export function shownOn(current: Settings, model: string | null): Settings {
+  return { ...current, fit: fitFor(current, model) }
+}
+
+/**
+ * A pick in the settings pane: saved in the store for every session, in force at once, and drawn back. The mode of
+ * fitting is kept for the family the session runs on, and only where none is known is it the mode for every model.
+ */
 export async function changeSetting($: EngineInterface, field: keyof Settings, value: string | boolean): Promise<void> {
   const current = await loadSettings($)
-  const changed = settingsFrom({ ...storedOf(current), [field]: value })
+  const family = field === 'fit' ? familyOf(await noteSessionModel($)) : null
+  const change = family === null ? { [field]: value } : { fitByModel: { ...current.fitByModel, [family]: value } }
+  const changed = settingsFrom({ ...storedOf(current), ...change })
   try {
     await $.store.set(SETTINGS_KEY, storedOf(changed))
     settings = changed
@@ -707,11 +845,20 @@ export function gradeTask(text: string): TaskLevel {
   return isQuestion && isPlain ? 'easy' : 'mid'
 }
 
-/** Whether a prompt only answers the last turn: one of its choices, or a few words that start no new work. */
+/**
+ * Whether a prompt only answers the last turn: one of its choices, an acknowledgement ("ok thanks"), a short
+ * continuation tied to the answer ("why?", "and the tests?", "go on"), or a short order ("push the change"), which
+ * (outside an easy task, where an order starts work of its own) is taken up by the task already running. Being short
+ * is not, by itself, enough: a short message that stands on its own, such as a greeting, starts a task and is graded.
+ * Experimental (0.12.0).
+ */
 export function isReply(text: string, choices: readonly string[]): boolean {
   const same = (said: string) => said.trim().toLowerCase().replace(/[.!?]+$/, '')
   if (choices.some(choice => same(choice) === same(text))) return true
-  return wordsIn(text) <= REPLY_MAX_WORDS && !HARD_WORK.test(text)
+  if (wordsIn(text) > REPLY_MAX_WORDS || HARD_WORK.test(text)) return false
+  if (isOrder(text)) return true
+  const left = text.trim().replace(ACK_LEAD, '')
+  return left.length === 0 || CONTINUES.test(left)
 }
 
 /** Whether a reply orders work rather than asks or acknowledges: "push it", "yep, let's do it", a bare "yes". */
@@ -750,12 +897,17 @@ export async function noteTask($: EngineInterface, text: string, isLeftAlone: bo
 }
 
 /** A main-loop turn begins: it takes its task from the prompt that started it, and is fitted when `routes` are given. */
-export function startTurn(turnId: string, routes: Routes | undefined): void {
+export function startTurn(turnId: string, routes: TurnRoutes | undefined): void {
+  runningTurn = turnId
   const decided = pending
   pending = undefined
   if (decided?.kind === 'skip') return
   if (decided?.kind === 'task' && (decided.isNew || task === null)) {
-    task = decided.asUsual ? { level: decided.level, asUsual: true } : { level: decided.level, toGrade: decided.toGrade }
+    task = decided.asUsual
+      ? { level: decided.level, asUsual: true }
+      : decided.isSwitched
+        ? { level: decided.level, isSwitched: true }
+        : { level: decided.level, toGrade: decided.toGrade }
   }
   if (task !== null && routes !== undefined && !isFitRefused) fitted.set(turnId, { task, routes })
 }
@@ -888,9 +1040,9 @@ export async function planTurn($: EngineInterface, turn: FittedTurn, e: TurnStep
     task.level = graded ?? task.level
     delete task.toGrade
   }
-  // Past the limit only a hard task is worth the uncached read a switch costs.
+  // Past the limit only a hard task is worth the uncached read a switch costs; one the person switched asked for it.
   const limit = Number(turn.routes.limit)
-  const isKept = !task.asUsual && task.level !== 'hard' && Number.isFinite(limit) && (await contextTokens($)) >= limit
+  const isKept = !task.asUsual && !task.isSwitched && task.level !== 'hard' && Number.isFinite(limit) && (await contextTokens($)) >= limit
   const route = task.asUsual || isKept ? null : routeFor(task.level, turn.routes, e)
   return { level: task.level, model: route?.model ?? e.model, effort: route?.effort ?? e.effort, ownModel: e.model, ownEffort: e.effort, isKept }
 }
@@ -909,10 +1061,100 @@ export function isMoved(turn: { model: string; effort: unknown; ownModel: string
   return turn.model !== turn.ownModel || turn.effort !== turn.ownEffort
 }
 
+const EFFORT_ORDER: readonly string[] = EFFORT_LEVELS
+
+/** A model and an effort as the comparisons below read them: a plan's, a request's or a band line's alike. */
+type ModelAndEffort = { model: string; effort?: unknown }
+
+/** Where a model's family stands, weakest first; -1 for a model the plugin cannot read. */
+function familyRank(model: string): number {
+  const family = familyOf(model)
+  return family === null ? -1 : MODEL_FAMILIES.indexOf(family)
+}
+
+/**
+ * Whether a grade's pick is a stronger model than the session's own, or the same model at a higher effort. An effort
+ * the session's request named none of cannot be compared, so the same model at an unknown effort is no step up.
+ */
+export function isStronger(route: ModelAndEffort, own: ModelAndEffort): boolean {
+  const [routeFamily, ownFamily] = [familyRank(route.model), familyRank(own.model)]
+  if (routeFamily < 0 || ownFamily < 0) return false
+  if (routeFamily !== ownFamily) return routeFamily > ownFamily
+
+  const [routeEffort, ownEffort] = [EFFORT_ORDER.indexOf(String(route.effort)), EFFORT_ORDER.indexOf(String(own.effort))]
+  return ownEffort >= 0 && routeEffort > ownEffort
+}
+
+/**
+ * Whether a grade's pick is another model than the session's own, or the same model at another effort that both name:
+ * what a suggestion can offer, up or down. An effort the session's request named none of cannot be compared.
+ */
+export function isElsewhere(route: ModelAndEffort, own: ModelAndEffort): boolean {
+  const [routeFamily, ownFamily] = [familyRank(route.model), familyRank(own.model)]
+  if (routeFamily < 0 || ownFamily < 0) return false
+  if (routeFamily !== ownFamily) return true
+
+  const [routeEffort, ownEffort] = [EFFORT_ORDER.indexOf(String(route.effort)), EFFORT_ORDER.indexOf(String(own.effort))]
+  return ownEffort >= 0 && routeEffort >= 0 && routeEffort !== ownEffort
+}
+
+/** Whether any grade of the settings could name something other than the session's own: else there is nothing to ask. */
+export function canSuggest(routes: Routes, own: Pick<TurnStepInput, 'model' | 'effort'>): boolean {
+  return (['easy', 'mid', 'hard'] as const).some(level => {
+    const route = routeFor(level, routes, own)
+    return route !== null && isElsewhere(route, own)
+  })
+}
+
 /** A plan as the band keeps it. */
 export function routedOf(plan: Plan, at: number): RoutedTurn {
   const named = (effort: TurnStepInput['effort']) => (effort === undefined ? null : String(effort))
-  return { level: plan.level, model: plan.model, effort: named(plan.effort), ownModel: plan.ownModel, ownEffort: named(plan.ownEffort), isKept: plan.isKept, at }
+  return { level: plan.level, model: plan.model, effort: named(plan.effort), ownModel: plan.ownModel, ownEffort: named(plan.ownEffort), isKept: plan.isKept, isSuggestion: false, at }
+}
+
+/**
+ * The grade of a new task asked of the model off the turn, which runs as the session set it: when it names another
+ * model or effort than the one running, up for a hard task or down for an easy one, the band offers the switch. Nothing
+ * is shown when it names what runs, when the person has moved on to another prompt, when no surface could show it, and
+ * for a prompt with an image, which asking again would lose.
+ */
+async function suggestSwitch($: EngineInterface, turn: FittedTurn, e: TurnStepInput): Promise<void> {
+  const { task: running, routes } = turn
+  const { toGrade } = running
+  if (toGrade === undefined) return
+
+  delete running.toGrade // once per task: its follow-ups ask nothing
+  const own = { model: e.model, effort: e.effort }
+  if (!canSuggest(routes, own) || toGrade.prompt.includes(IMAGE_NOTE)) return
+
+  const ask = epoch
+  try {
+    if ((await $.session.surfaces()).length === 0) return
+
+    const graded = await gradeWithModel($, toGrade, routes.grading, routes.grader)
+    running.level = graded ?? running.level
+    const route = routeFor(running.level, routes, own)
+    if (ask !== epoch || route === null || !isElsewhere(route, own)) return
+
+    const named = (effort: TurnStepInput['effort']) => (effort === undefined ? null : String(effort))
+    // A model of another family whose mode is Automatic is switched to as /model would, and its mode comes with it.
+    const target = familyOf(route.model)
+    const switchesSession = target !== null && target !== familyOf(e.model) && fitFor(settings, route.model) === 'auto'
+    const shown: RoutedTurn = {
+      level: running.level,
+      model: route.model,
+      effort: named(route.effort),
+      ownModel: e.model,
+      ownEffort: named(e.effort),
+      isKept: false,
+      isSuggestion: true,
+      switchesSession,
+      at: await $.clock.now(),
+    }
+    await update($, routed, () => shown)
+  } catch {
+    // a suggestion is a bonus: the turn never hears of a failed one
+  }
 }
 
 /** Shows in the band what a fitted turn runs on, or nothing when it runs as usual. */
@@ -925,6 +1167,15 @@ export async function showPlan($: EngineInterface, plan: Plan | null): Promise<v
 export async function routedStep($: EngineInterface, e: TurnStepInput): Promise<Pick<TurnStepInput, 'model' | 'effort'> | undefined> {
   const turn = e.agentId === undefined ? fitted.get(e.turnId) : undefined
   if (turn === undefined) return undefined
+  if (turn.routes.fit === 'suggest' && !turn.task.isSwitched) {
+    // Suggest: the request goes as the engine made it, with no wait. A new task's first request has its grade asked
+    // off the turn, which only ever offers a switch.
+    if (turn.plan === undefined) {
+      turn.plan = null
+      void suggestSwitch($, turn, e)
+    }
+    return undefined
+  }
   if (turn.plan === undefined) {
     turn.plan = await planTurn($, turn, e)
     await showPlan($, turn.plan)
@@ -986,10 +1237,35 @@ export async function* fittedStream(
   return yield* stream
 }
 
+/** A model and effort in words: "Opus 5.5 at max effort", or the model alone where no effort is named. */
+function runsOn(model: string, effort: string | null): string {
+  return effort === null ? modelName(model) : `${modelName(model)} at ${effort} effort`
+}
+
 /** A fitted turn in words: "Easy task · Haiku 5.5 at low effort". */
 export function describeRouted(turn: Pick<RoutedTurn, 'level' | 'model' | 'effort' | 'isKept'>): string {
-  const runsOn = turn.effort === null ? modelName(turn.model) : `${modelName(turn.model)} at ${turn.effort} effort`
-  return `${GRADE_NAMES[turn.level]} task · ${runsOn}${turn.isKept ? ' · kept: long conversation' : ''}`
+  return `${GRADE_NAMES[turn.level]} task · ${runsOn(turn.model, turn.effort)}${turn.isKept ? ' · kept: long conversation' : ''}`
+}
+
+/** What a turn with a suggestion runs on, in words: "Hard task · Sonnet 5.5 at high effort". */
+export function describeSuggested(turn: Pick<RoutedTurn, 'level' | 'ownModel' | 'ownEffort'>): string {
+  return describeRouted({ level: turn.level, model: turn.ownModel, effort: turn.ownEffort, isKept: false })
+}
+
+/** A task sent on to its grade's pick, in words: "Easy task · follow-ups on Haiku 5.5 at low effort". */
+export function describeOnward(turn: Pick<RoutedTurn, 'level' | 'model' | 'effort'>): string {
+  return `${GRADE_NAMES[turn.level]} task · follow-ups on ${runsOn(turn.model, turn.effort)}`
+}
+
+/**
+ * The label of the button that takes a task to what its grade names: "Switch to Opus 5.5 at max effort" while the answer
+ * runs or for a stronger pick, which asks the prompt again; "Continue on Haiku 5.5 at low effort" for a cheaper pick
+ * once the answer is in, which sends the follow-ups there; "with Automatic on" where that model's mode is Automatic, so
+ * the session moves there too.
+ */
+export function switchLabel(turn: Pick<RoutedTurn, 'model' | 'effort' | 'ownModel' | 'ownEffort' | 'switchesSession'>, isWorking: boolean): string {
+  const verb = isWorking || isStronger(turn, { model: turn.ownModel, effort: turn.ownEffort }) ? 'Switch to' : 'Continue on'
+  return turn.switchesSession === true ? `${verb} ${modelName(turn.model)} with Automatic on` : `${verb} ${runsOn(turn.model, turn.effort)}`
 }
 
 /** The label of the link that asks the last prompt again as usual: on the session's model, or at its effort. */
@@ -1014,6 +1290,49 @@ export async function redoAsUsual($: EngineInterface): Promise<void> {
   await $.prompt.submit({ text: prompt.text, asUser: true })
 }
 
+/**
+ * A suggestion pressed: the running answer is stopped, if there is one, and the last prompt is asked again on what its
+ * grade names, a new task there whose follow-ups stay. Once the answer is in, a cheaper pick would only repeat it, so
+ * the task goes on there from its next turn instead. Where that model's mode is Automatic, the session switches to it
+ * first, as /model does, so Automatic fits the tasks after. Once however often it is pressed.
+ */
+export async function switchToFit($: EngineInterface): Promise<void> {
+  const taken: { turn: RoutedTurn | null } = { turn: null }
+  await update($, routed, current => {
+    const isOffered = current !== null && current.isSuggestion
+    taken.turn = isOffered ? current : null
+    return isOffered ? null : current
+  })
+  const offered = taken.turn
+  const prompt = await read($, last)
+  if (offered === null || prompt === null) return
+
+  const isRunning = runningTurn !== undefined
+  if (isRunning) {
+    try {
+      await $.turn.abort({ turnId: runningTurn as string })
+    } catch {
+      // it ended meanwhile: the prompt is asked again all the same
+    }
+  }
+  if (offered.switchesSession === true) {
+    try {
+      await $.command.run({ command: 'model', args: offered.model })
+    } catch {
+      // the session stays on its model: the task alone switches, as any other suggestion's does
+    }
+  }
+  if (!isRunning && !isStronger(offered, { model: offered.ownModel, effort: offered.ownEffort })) {
+    task = { level: offered.level, isSwitched: true }
+    const at = await $.clock.now()
+    await update($, routed, () => ({ ...offered, isSuggestion: false, isOnward: true, at }))
+    return
+  }
+  pending = { kind: 'task', level: offered.level, isNew: true, isSwitched: true, toGrade: { prompt: prompt.text, before: '', reply: '' } }
+  await recordPrompt($, prompt.text, prompt.isFromProgram)
+  await $.prompt.submit({ text: prompt.text, asUser: true })
+}
+
 /** The elements the band and the panes draw with, which every surface carries. */
 type Parts = Pick<ElementTable, 'Box' | 'Button' | 'Markdown' | 'Text'>
 
@@ -1027,22 +1346,32 @@ export function quoteOf(text: string, max: number): string {
   return `> ${escapeMarkdown(oneLine(text, max))}`
 }
 
+/** What the line on a fitted turn needs to know of where it is drawn. */
+type FitRowOptions = { hasPrompt: boolean; isWorking: boolean; isTerminal: boolean; hasNumberKeys: boolean }
+
 /**
- * What a fitted turn runs on, quietly, and once one that ran on something else has ended, a link that asks the prompt
- * again as usual: a dim line and a button on the terminal, one dim markdown line with its link elsewhere.
+ * What a turn runs on, quietly, with one button: the switch a suggestion offers (stopping the answer that is running,
+ * or sending a finished task's follow-ups on), or once a fitted turn that ran on something else has ended, the redo that
+ * asks the prompt again as usual; a task sent on shows where its follow-ups go, with nothing to press. A dim line and a
+ * button on the terminal (0 presses it, with the number keys on), one dim markdown line with its link elsewhere.
  */
-function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, canRedo: boolean, isTerminal: boolean) {
+function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, { hasPrompt, isWorking, isTerminal, hasNumberKeys }: FitRowOptions) {
   const { Box, Button, Markdown, Text } = ui
-  const hasRedo = canRedo && isMoved(fit)
+  const { isSuggestion } = fit
+  const isOnward = fit.isOnward === true
+  const hasButton = hasPrompt && !isOnward && (isSuggestion || (!isWorking && isMoved(fit)))
+  const words = isOnward ? describeOnward(fit) : isSuggestion ? describeSuggested(fit) : describeRouted(fit)
+  const label = isSuggestion ? switchLabel(fit, isWorking) : redoLabel(fit)
+  const key = isSuggestion ? 'switch' : 'redo'
+  const press = () => (isSuggestion ? switchToFit($) : redoAsUsual($))
   if (!isTerminal) {
-    const redo = hasRedo ? ` · [${escapeMarkdown(redoLabel(fit))}](${REDO_HREF})` : ''
     return (
       <Box key="fit">
         <Markdown
           key="task"
-          text={`${escapeMarkdown(describeRouted(fit))}${redo}`}
+          text={`${escapeMarkdown(words)}${hasButton ? ` · [${escapeMarkdown(label)}](${REDO_HREF})` : ''}`}
           dimColor
-          {...(hasRedo ? { pressableLinks: [REDO_HREF], onLinkPress: () => redoAsUsual($) } : {})}
+          {...(hasButton ? { pressableLinks: [REDO_HREF], onLinkPress: press } : {})}
         />
       </Box>
     )
@@ -1051,12 +1380,13 @@ function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, canRedo: boolean
     <Box key="fit" flexWrap="wrap" columnGap={2}>
       <Box key="task" flexShrink={1}>
         <Text dimColor wrap="truncate-end">
-          {describeRouted(fit)}
+          {words}
         </Text>
       </Box>
-      {hasRedo && (
-        <Button key="redo" label={redoLabel(fit)} plain onPress={() => redoAsUsual($)}>
-          <Text color={ACCENT}>{`${redoLabel(fit)}${CHEVRON}`}</Text>
+      {hasButton && hasNumberKeys && <Button key={key} label={label} plain hotkey="0" onPress={press} />}
+      {hasButton && !hasNumberKeys && (
+        <Button key={key} label={label} plain onPress={press}>
+          <Text color={ACCENT}>{`${label}${CHEVRON}`}</Text>
         </Button>
       )}
     </Box>
@@ -1084,6 +1414,203 @@ function choiceList($: EngineInterface, ui: Parts, choices: readonly string[]) {
   )
 }
 
+/**
+ * The choices on the terminal, numbered as Claude Code's own surveys number their answers: with the number keys on, a
+ * number typed into the empty prompt box picks one. A dim line under them says so, and where the settings are.
+ */
+function numberedChoices($: EngineInterface, ui: Parts, choices: readonly string[], columns: number, current: Settings) {
+  const { Box, Button, Text } = ui
+  const room = Math.max(10, columns - (current.numberKeys ? HOTKEY_COLUMNS : BUTTON_CHROME))
+  return (
+    <Box key="choices" flexDirection="column">
+      <Box key="list" flexWrap="wrap" columnGap={3}>
+        {choices.map((choice, i) =>
+          current.numberKeys ? (
+            <Button key={`choice-${i + 1}`} label={oneLine(choice, room)} plain hotkey={String(i + 1)} onPress={() => pressChoice($, choice, choices)} />
+          ) : (
+            <Button key={`choice-${i + 1}`} label={oneLine(choice, room)} onPress={() => pressChoice($, choice, choices)} />
+          ),
+        )}
+      </Box>
+      <Box key="hint">
+        <Text dimColor wrap="truncate-end">
+          {`${pickHint(current, choices.length)} · ${SETTINGS_HINT}`}
+        </Text>
+      </Box>
+    </Box>
+  )
+}
+
+/** How the terminal picks a choice from the keys: its number, or with the number keys off, the band's focus. */
+export function pickHint(current: Pick<Settings, 'numberKeys' | 'onPress'>, count: number): string {
+  if (!current.numberKeys) return BAND_FOCUS_HINT
+  const numbers = count === 1 ? '1' : `1–${count}`
+  return current.onPress === 'box' ? `type ${numbers} to edit before sending` : `type ${numbers} to send`
+}
+
+/** One row of the terminal's settings menu: the setting, its label there, its options and a line on what it does. */
+type MenuRow = { field: keyof Settings; label: string; options: readonly SelectOption[]; about: string }
+
+const SUGGEST_ROWS: readonly MenuRow[] = [
+  { field: 'suggest', label: 'Suggest next messages', options: ON_OFF, about: 'After each answer a model writes the messages you are likeliest to send next.' },
+  { field: 'model', label: 'Model', options: MODELS, about: 'The model that writes them, as part of your plan’s usage.' },
+  { field: 'effort', label: 'Thinking effort', options: EFFORTS, about: 'How long that model thinks before it writes them.' },
+  { field: 'choices', label: 'Number of choices', options: CHOICE_COUNTS, about: 'How many it offers after each answer.' },
+  { field: 'onPress', label: 'Picking a choice', options: PRESS_ACTIONS, about: 'Sends the choice as your message, or puts it in the prompt box to edit first.' },
+  {
+    field: 'numberKeys',
+    label: 'Number keys',
+    options: ON_OFF,
+    about: 'A choice’s number typed into the empty prompt box picks it. Off, a number there is typed as usual.',
+  },
+]
+const ROUTE_ROWS: readonly MenuRow[] = [
+  {
+    field: 'fit',
+    label: 'Fit to each task',
+    options: FIT_MODES,
+    about:
+      'A model grades each new task. Suggest changes nothing and offers a button when another model would fit; Automatic switches on its own. Each model keeps the mode you pick while on it.',
+  },
+  { field: 'easy', label: 'Easy tasks', options: TIER_ROUTES, about: 'What questions, lookups and short explanations run on, or are suggested to switch to.' },
+  { field: 'mid', label: 'Mid tasks', options: TIER_ROUTES, about: 'What everyday changes, commands and fixes with a clear cause run on, or are suggested to switch to.' },
+  { field: 'hard', label: 'Hard tasks', options: TIER_ROUTES, about: 'What planning, refactors, migrations and bugs with an unclear cause run on, or are suggested to switch to.' },
+  { field: 'limit', label: 'Switch limit', options: LIMITS, about: 'Automatic only: past this size of conversation only hard tasks switch, since a switch reads it once uncached.' },
+  { field: 'grader', label: 'Grader', options: MODELS, about: 'The model that grades each new task, at low effort, as part of your plan’s usage.' },
+  { field: 'grading', label: 'Grading', options: GRADINGS, about: 'Two calls keep the harder of two grades, for twice the grading cost.' },
+]
+const MENU: readonly MenuRow[] = [...SUGGEST_ROWS, ...ROUTE_ROWS]
+
+/** A setting's value as its picker holds it: booleans as on or off, the number of choices as text. */
+function pickerValue(current: Settings, field: keyof Settings): string {
+  const value = current[field]
+  return typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value)
+}
+
+/** An option's label up to its colon, as a menu row shows it: "Sonnet 5.5", "High". */
+export function shortLabel(label: string): string {
+  return label.split(': ')[0] ?? label
+}
+
+/** The keys of a menu row and of an option in a setting's list. */
+const ROW_KEY = 'setting-'
+const rowKey = (field: keyof Settings): string => `${ROW_KEY}${field}`
+const optionKey = (value: string): string => `option-${value}`
+
+/** What the line atop the menu says of a row: what it does, and what "my model and effort" is where a grade names it. */
+function aboutOf(row: MenuRow, current: Settings, note: string | null): string {
+  const isOwn = (row.field === 'easy' || row.field === 'mid' || row.field === 'hard') && current[row.field] === OWN_ROUTE
+  return isOwn && note !== null ? `${row.about} ${note}` : row.about
+}
+
+/** A menu row pressed: a switch flips where it stands; any other setting lists its options, the ring on its own. */
+async function pressMenuRow($: EngineInterface, row: MenuRow): Promise<void> {
+  const current = await loadSettings($)
+  if (row.options === ON_OFF) {
+    await changeSetting($, row.field, !current[row.field])
+    return
+  }
+  await update($, menuView, () => row.field)
+  await focusMenu($, optionKey(pickerValue(current, row.field)))
+}
+
+/** An option picked: saved, and back to the list with the ring on its row. */
+async function pickOption($: EngineInterface, row: MenuRow, value: string): Promise<void> {
+  await changeSetting($, row.field, row.options === ON_OFF ? value === 'on' : value)
+  await update($, menuView, () => MENU_LIST)
+  await focusMenu($, rowKey(row.field))
+}
+
+/**
+ * Moves the menu's ring onto `key` once the next drawing brings it, and the window as little as shows it; where the
+ * ring cannot move, it stays put. The line on what the row does follows at once.
+ */
+async function focusMenu($: EngineInterface, key: string): Promise<void> {
+  await update($, menuFocus, () => key)
+  try {
+    await $.ui.focus({ requestId: SETTINGS_PANE, key })
+    await $.ui.scroll({ in: SETTINGS_PANE, to: { key } })
+  } catch {
+    // the ring stays on the row it was on
+  }
+}
+
+/** The keys the menu's ring walks in the view shown, top to bottom: the rows, or the options of the setting open. */
+async function menuKeys($: EngineInterface): Promise<string[]> {
+  const view = await read($, menuView)
+  const open = MENU.find(row => row.field === view)
+  return open === undefined ? MENU.map(row => rowKey(row.field)) : open.options.map(option => optionKey(option.value))
+}
+
+/**
+ * The settings as the terminal's menu, where no picker opens under a pointer: a row per setting with its value, which
+ * the arrows walk and Enter changes. The keys and a line on what the row under the ring does head it, where a terminal
+ * too short to show it whole still shows them. A switch flips in place; any other setting lists its options, numbered
+ * as Claude Code numbers a menu's.
+ */
+function settingsMenu($: EngineInterface, ui: Parts, current: Settings, view: string, focus: string | null, note: string | null) {
+  const { Box, Button, Text } = ui
+  const open = MENU.find(row => row.field === view)
+  if (open !== undefined) return optionList($, ui, current, open, note)
+
+  const focused = MENU.find(row => rowKey(row.field) === focus) ?? SUGGEST_ROWS[0]
+  const rowButton = (row: MenuRow, isFirst: boolean) => (
+    <Button key={rowKey(row.field)} label={row.label} plain {...(isFirst ? { autoFocus: true as const } : {})} onPress={() => pressMenuRow($, row)}>
+      {row.label.padEnd(MENU_LABEL_COLUMNS)}
+      <Text color={ACCENT}>{shortLabel(labelOf(row.options, pickerValue(current, row.field)))}</Text>
+    </Button>
+  )
+  return (
+    <Box flexDirection="column">
+      <Box key="title">
+        <Text weight="semibold">{SETTINGS_TITLE}</Text>
+        <Text dimColor>{` · ${MENU_KEYS}`}</Text>
+      </Box>
+      {focused !== undefined && (
+        <Box key="about">
+          <Text dimColor>{aboutOf(focused, current, note)}</Text>
+        </Box>
+      )}
+      <Text weight="semibold">Suggested next messages</Text>
+      <Box key="suggestRows" flexDirection="column" paddingLeft={2}>
+        {SUGGEST_ROWS.map((row, i) => rowButton(row, i === 0))}
+      </Box>
+      <Text weight="semibold">Model and effort for each task</Text>
+      <Box key="routeRows" flexDirection="column" paddingLeft={2}>
+        {ROUTE_ROWS.map(row => rowButton(row, false))}
+      </Box>
+    </Box>
+  )
+}
+
+/** One setting's options, numbered (the first nine, and 0 for a tenth), its own marked; Enter or a number picks. */
+function optionList($: EngineInterface, ui: Parts, current: Settings, row: MenuRow, note: string | null) {
+  const { Box, Button, Text } = ui
+  const value = pickerValue(current, row.field)
+  return (
+    <Box flexDirection="column">
+      <Box key="title">
+        <Text weight="semibold">{row.label}</Text>
+        <Text dimColor>{` · ${OPTION_KEYS}`}</Text>
+      </Box>
+      <Box key="about">
+        <Text dimColor>{aboutOf(row, current, note)}</Text>
+      </Box>
+      <Box key="options" flexDirection="column" paddingLeft={2}>
+        {row.options.map((option, i) => {
+          const hotkey = i < 9 ? String(i + 1) : i === 9 ? '0' : undefined
+          const label = option.label ?? option.value
+          return (
+            <Button key={optionKey(option.value)} label={label} plain {...(hotkey === undefined ? {} : { hotkey })} onPress={() => pickOption($, row, option.value)}>
+              {`${hotkey === undefined ? ' '.repeat(HOTKEY_COLUMNS) : ''}${label}${option.value === value ? '  ✓' : ''}`}
+            </Button>
+          )
+        })}
+      </Box>
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await loadSettings($)
@@ -1107,8 +1634,8 @@ export const register: Register = on => {
   on('command.run', { command: 'companion' }, async $ => {
     if (await openSettings($)) return { text: 'Companion settings opened.' }
 
-    const current = await loadSettings($)
-    const note = current.route ? ownNote(current, await read($, own)) : null
+    const current = shownOn(await loadSettings($), await noteSessionModel($))
+    const note = current.fit !== 'off' ? ownNote(current, await read($, own)) : null
     const lines = [settingsLine(current), note, 'No panel draws here: run /companion in VS Code or the terminal to change them.']
     return { text: lines.filter(line => line !== null).join('\n') }
   })
@@ -1168,8 +1695,14 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     // The main loop's turns take their task from the prompt that started them; a subagent's are its own.
     if (e.agentId === undefined) {
+      turnStarts.set(e.turnId, await $.clock.now())
       const current = await loadSettings($)
-      startTurn(e.turnId, current.route ? { easy: current.easy, mid: current.mid, hard: current.hard, limit: current.limit, grading: current.grading, grader: current.grader } : undefined)
+      // The mode kept for the session's model: /model, or a switch pressed, may have changed it since the last turn.
+      const fit = fitFor(current, await noteSessionModel($))
+      startTurn(
+        e.turnId,
+        fit === 'off' ? undefined : { fit, easy: current.easy, mid: current.mid, hard: current.hard, limit: current.limit, grading: current.grading, grader: current.grader },
+      )
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -1189,6 +1722,9 @@ export const register: Register = on => {
     const result = await next(e)
     const plan = e.agentId === undefined ? fitted.get(e.turnId)?.plan : undefined
     fitted.delete(e.turnId)
+    const startedAt = turnStarts.get(e.turnId)
+    turnStarts.delete(e.turnId)
+    if (e.agentId === undefined && runningTurn === e.turnId) runningTurn = undefined
     // Main-thread turns that answered: a subagent's report, an interrupted turn or a refusal suggests nothing.
     if (e.agentId !== undefined || e.reason !== 'answer' || e.answer.trim().length === 0) return result
 
@@ -1196,10 +1732,12 @@ export const register: Register = on => {
     const current = await loadSettings($)
     const ask = epoch
     const prompt = await read($, last)
+    // A prompt sent while the answer ran is the next message already: there is nothing to suggest for this answer.
+    const hasMovedOn = prompt !== null && startedAt !== undefined && prompt.at > startedAt
 
     if ((await $.session.surfaces()).length > 0) {
       // The band or the pane shows them: asked on a timer, so the end of the turn never waits on the model.
-      if (current.suggest) {
+      if (current.suggest && !hasMovedOn) {
         $.clock.after(1, () => {
           void suggestNext($, ask, prompt?.text ?? '', e.answer)
         })
@@ -1210,7 +1748,7 @@ export const register: Register = on => {
     // Nothing draws this mod's UI: what a fitted turn ran on and the choices become the turn's text, which the engine
     // shows as a notice beneath the answer. A program's prompt (claude -p, the Agent SDK) has nobody to read one.
     if (prompt === null || prompt.isFromProgram) return result
-    const choices = current.suggest ? await askNext($, ask, prompt.text, e.answer) : null
+    const choices = current.suggest && !hasMovedOn ? await askNext($, ask, prompt.text, e.answer) : null
     const lines = [
       plan === undefined || plan === null ? '' : describeRouted(routedOf(plan, 0)),
       choices === null ? '' : `${NEXT_LABEL}${numbered(choices)}`,
@@ -1238,6 +1776,35 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e)) // nor the close
 
+  on('ui.focus', { requestId: SETTINGS_PANE }, async ($, e, next) => {
+    // The settings menu's ring moved: the line under the menu says what the row it landed on does.
+    const result = await next(e)
+    if (!('deny' in result && result.deny !== undefined) && e.element !== undefined) {
+      const landed = e.element
+      await update($, menuFocus, () => landed)
+    }
+    return result
+  }).catch(($, e, next) => next(e)) // nor the ring
+
+  on('ui.scroll', { requestId: SETTINGS_PANE }, async ($, e, next) => {
+    // A terminal too short for the menu scrolls its window under ↑↓ and leaves the ring on a row out of sight: there an
+    // arrow moves the ring a row instead, as it does where the menu fits, and the window follows the ring. The wheel,
+    // the page keys and this mod's own scrolls pass.
+    const isArrow = e.origin.kind === 'person' && e.pointer === undefined && Math.abs(e.by) === 1
+    if (!isArrow) return next(e)
+
+    const keys = await menuKeys($)
+    const at = Math.max(0, keys.indexOf((await read($, menuFocus)) ?? ''))
+    const target = keys[Math.min(keys.length - 1, Math.max(0, at + e.by))]
+    if (target !== undefined) {
+      // Moved once this scroll is answered: the ring and the window wait on no hook of theirs.
+      $.clock.after(1, () => {
+        void focusMenu($, target)
+      })
+    }
+    return {}
+  }).catch(($, e, next) => next(e)) // nor the window
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const prompt = await read($, last)
     const idea = await read($, suggested)
@@ -1251,7 +1818,7 @@ export const register: Register = on => {
     // so there the texts go whole and wrap, as markdown: the last prompt a quote, the choices rows of links.
     const isTerminal = e.surface === 'terminal'
     const lastRoom = isTerminal ? Math.max(10, e.props.bodyColumns - QUOTE_COLUMNS - MORE_COLUMNS) : LAST_MAX_CHARS
-    const choiceRoom = Math.max(10, e.props.bodyColumns - NEXT_LABEL.length - BUTTON_CHROME)
+    const current = await shownSettings($)
 
     return (
       <Box flexDirection="column" rowGap="xs">
@@ -1269,22 +1836,9 @@ export const register: Register = on => {
             <Button key="settings" label={MORE} plain dimColor onPress={() => openSettings($)} />
           </Box>
         )}
-        {fit !== null && fitRow($, ui, fit, !e.props.isWorking && prompt !== null, isTerminal)}
-        {idea !== null && isTerminal && (
-          <Box>
-            <Text dimColor>{NEXT_LABEL}</Text>
-            <Box key="choices" flexWrap="wrap" columnGap={1} flexShrink={1}>
-              {idea.choices.map((choice, i) => (
-                <Button
-                  key={`choice-${i + 1}`}
-                  label={oneLine(choice, choiceRoom)}
-                  variant={i === 0 ? 'primary' : undefined}
-                  onPress={() => pressChoice($, choice, idea.choices)}
-                />
-              ))}
-            </Box>
-          </Box>
-        )}
+        {fit !== null &&
+          fitRow($, ui, fit, { hasPrompt: prompt !== null, isWorking: e.props.isWorking, isTerminal, hasNumberKeys: isTerminal && current.numberKeys })}
+        {idea !== null && isTerminal && numberedChoices($, ui, idea.choices, e.props.bodyColumns, current)}
         {idea !== null && !isTerminal && choiceList($, ui, idea.choices)}
       </Box>
     )
@@ -1298,7 +1852,7 @@ export const register: Register = on => {
     const { Box, Button, Markdown, Text } = ui
     // As in the band: cut to the terminal's exact columns, whole and wrapping everywhere else.
     const isTerminal = e.surface === 'terminal'
-    const choiceRoom = Math.max(10, e.props.bodyColumns - BUTTON_CHROME)
+    const choiceRoom = Math.max(10, e.props.bodyColumns - HOTKEY_COLUMNS)
 
     return (
       <Box flexDirection="column" rowGap="sm">
@@ -1318,7 +1872,7 @@ export const register: Register = on => {
             </Box>
           )}
         </Box>
-        {fit !== null && fitRow($, ui, fit, prompt !== null, isTerminal)}
+        {fit !== null && fitRow($, ui, fit, { hasPrompt: prompt !== null, isWorking: false, isTerminal, hasNumberKeys: false })}
         {idea !== null && !isTerminal && choiceList($, ui, idea.choices)}
         {idea !== null && isTerminal && (
           <Box key="choices" flexDirection="column">
@@ -1327,7 +1881,8 @@ export const register: Register = on => {
               <Button
                 key={`choice-${i + 1}`}
                 label={oneLine(choice, choiceRoom)}
-                variant={i === 0 ? 'primary' : undefined}
+                plain
+                hotkey={String(i + 1)}
                 onPress={() => pressChoice($, choice, idea.choices)}
               />
             ))}
@@ -1338,10 +1893,13 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: SETTINGS_PANE }, async ($, e) => {
-    // Drawn from $.state (a pick redraws it); a render never writes, so before the first load it reads the store.
-    const drawn = await read($, savedSettings)
-    const current = drawn !== null ? settingsFrom(drawn) : ((await readSettings($)) ?? settings)
+    // Drawn from $.state (a pick redraws it); a render never writes, so before the first load it reads the store. The
+    // mode shown is the one kept for the session's model, read as the pane opened.
+    const current = shownOn(await shownSettings($), await read($, sessionModel))
     const note = ownNote(current, await read($, own))
+    if (e.surface === 'terminal') {
+      return settingsMenu($, $.ui.resolve(e), current, await read($, menuView), await read($, menuFocus), note)
+    }
     if (e.surface === 'mobile') {
       // The mobile app draws no picker: the settings as text, in the same groups, changed from a computer.
       const { Box, Text } = $.ui.resolve(e)
@@ -1420,16 +1978,22 @@ export const register: Register = on => {
           </Text>
           <Box key="routeCard" flexDirection="column" borderStyle="round" borderColor={QUOTE_COLOR} paddingX="sm">
             <Select
-              key="route"
+              key="fit"
               label="Fit model and effort to each task"
-              value={current.route ? 'on' : 'off'}
-              options={ON_OFF}
-              onSelect={value => changeSetting($, 'route', value === 'on')}
+              value={current.fit}
+              options={FIT_MODES}
+              onSelect={value => changeSetting($, 'fit', value)}
             />
             <Select key="easy" label="Easy tasks" value={current.easy} options={TIER_ROUTES} onSelect={value => changeSetting($, 'easy', value)} />
             <Select key="mid" label="Mid tasks" value={current.mid} options={TIER_ROUTES} onSelect={value => changeSetting($, 'mid', value)} />
             <Select key="hard" label="Hard tasks" value={current.hard} options={TIER_ROUTES} onSelect={value => changeSetting($, 'hard', value)} />
-            <Select key="limit" label="Easy and mid tasks switch up to" value={current.limit} options={LIMITS} onSelect={value => changeSetting($, 'limit', value)} />
+            <Select
+              key="limit"
+              label="Automatic: easy and mid tasks switch up to"
+              value={current.limit}
+              options={LIMITS}
+              onSelect={value => changeSetting($, 'limit', value)}
+            />
             <Select key="grader" label="Grader" value={current.grader} options={MODELS} onSelect={value => changeSetting($, 'grader', value)} />
             <Select key="grading" label="Grading" value={current.grading} options={GRADINGS} onSelect={value => changeSetting($, 'grading', value)} />
           </Box>
