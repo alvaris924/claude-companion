@@ -20,7 +20,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one stage, a live Claude Code session where the band does its job, then quiet rows that each pair a claim with its own small demo. Every demo shows the same moment in VS Code and in the terminal, one tab apart. Dark first. */
+/* Layout: a hero, then quiet rows that each pair a claim with its own small demo. Every demo shows the same moment in VS Code and in the terminal, one tab apart. Dark first. */
 :root {
   color-scheme: dark;
   --bg: #0b0c0f;
@@ -94,16 +94,6 @@ h1 .soft { color: var(--muted); }
 .ghost { font-size: 16px; font-weight: 500; color: var(--fg); padding: 8px 4px; }
 .meta { font-size: 14px; color: var(--muted); margin: 0; }
 
-/* The stage: a Claude Code session in miniature */
-.stage { position: relative; margin-top: 30px; }
-.stage::before { content: ""; position: absolute; left: -10%; right: -10%; top: -90px; height: 420px; background: radial-gradient(closest-side at 50% 40%, var(--glow), transparent); pointer-events: none; }
-.window { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: 0 40px 90px -50px var(--shadow); }
-.win-bar { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
-.dots { display: flex; gap: 6px; }
-.dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--raise); border: 1px solid var(--line); }
-.win-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 22px; font-size: 16px; }
-.msg-user { justify-self: end; max-width: 78%; background: var(--raise); border: 1px solid var(--line); border-radius: 14px; padding: 8px 13px; overflow-wrap: anywhere; }
-.msg-answer { max-width: 64ch; min-height: calc(1.6em * 3); overflow-wrap: anywhere; }
 .composer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 11px 14px; background: var(--panel); color: var(--muted); font-size: 15px; }
 .composer .filled { color: var(--fg); }
 .send { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--raise); border: 1px solid var(--line); font-size: 13px; color: var(--muted); }
@@ -168,7 +158,6 @@ h2 { font-size: clamp(30px, 4.4vw, 46px); line-height: 1.08; letter-spacing: -0.
 .term .ring { background: var(--fg); color: var(--term); }
 .term .ring .acc, .term .ring .k { color: inherit; }
 .term .is-pick { color: var(--accent); }
-.window .term { border: 0; border-radius: 0; padding: 18px 20px; font-size: 14px; }
 .press-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 
 .soon { border-top: 1px solid var(--line); padding-top: 28px; display: grid; gap: 6px; }
@@ -230,14 +219,11 @@ footer a:hover { color: var(--fg); }
 }
 @media (max-width: 520px) {
   body { font-size: 16px; }
-  .win-body { padding: 14px; font-size: 15px; }
-  .msg-answer { min-height: calc(1.6em * 5); }
   .demo { padding: 12px; }
   .card .r { flex-direction: column; gap: 0; }
   .card .v { text-align: left; }
   .surfaces div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   section.block { padding-block: 72px 0; }
-  .window .term { padding: 14px; font-size: 12.5px; }
   .term { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
@@ -271,47 +257,6 @@ footer a:hover { color: var(--fg); }
     </div>
     <p class="meta">Free and open source · MIT license · Claude Code 2.1.300 or newer</p>
 
-    <div class="stage surface" data-tabs>
-      <div class="tabs" role="tablist" aria-label="Show it in">
-        <button class="tab" type="button" role="tab" id="hero-t-vscode" aria-controls="hero-p-vscode" aria-selected="true" data-surface="vscode">VS Code</button>
-        <button class="tab" type="button" role="tab" id="hero-t-terminal" aria-controls="hero-p-terminal" aria-selected="false" tabindex="-1" data-surface="terminal">Terminal</button>
-      </div>
-      <div id="hero-p-vscode" role="tabpanel" aria-labelledby="hero-t-vscode">
-        <div class="window" data-demo="hero" role="img" aria-label="Claude Code in VS Code: after the answer, Companion shows the last prompt and three suggested next messages above the prompt box">
-          <div class="win-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Claude Code in VS Code, with Companion</span></div>
-          <div class="win-body">
-            <div class="msg-user" data-user>merge the parser work</div>
-            <div class="msg-answer" data-answer>Merged the parser fix into the feature branch, and all 63 tests pass. Want me to open the pull request into dev next?</div>
-            <div class="band">
-              <div class="band-label">Companion</div>
-              <div class="row"><div class="quote" data-quote>merge the parser work</div><div class="more">⋯</div></div>
-              <div class="eyebrow">Suggested</div>
-              <div class="choices">
-                <div class="choice">↳ Open the pull request into dev</div>
-                <div class="choice">↳ Show me the diff first</div>
-                <div class="choice">↳ Run the tests on Windows too</div>
-              </div>
-            </div>
-            <div class="composer"><span>Type your next message</span><span class="send" aria-hidden="true">↑</span></div>
-          </div>
-        </div>
-      </div>
-      <div id="hero-p-terminal" role="tabpanel" aria-labelledby="hero-t-terminal" hidden>
-        <div class="window" data-demo="heroTerm" role="img" aria-label="Claude Code in a terminal: after the answer, Companion shows the last prompt and three numbered next messages; typing 2 into the empty prompt sends the second">
-          <div class="win-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Claude Code in a terminal, with Companion</span></div>
-          <div class="term">
-            <div class="line"><span class="acc">&gt;</span> <span data-user>merge the parser work</span></div>
-            <div class="line flow" data-answer>Merged the parser fix into the feature branch, and all 63 tests pass. Want me to open the pull request into dev next?</div>
-            <div class="gap"></div>
-            <div class="line bar"><span class="quote" data-quote>merge the parser work</span><span class="dim">⋯</span></div>
-            <div class="line flow" data-choices><span class="ch"><span class="k">1:</span> Open the pull request into dev</span><span class="ch"><span class="k">2:</span> Show me the diff first</span><span class="ch"><span class="k">3:</span> Run the tests on Windows too</span></div>
-            <div class="line dim">type 1–3 to send · /companion for settings</div>
-            <div class="rule"></div>
-            <div class="line"><span class="acc">&gt;</span> <span class="keycap" data-key>2</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
   </section>
 
   <section class="block" id="features" aria-labelledby="features-h">
@@ -323,7 +268,7 @@ footer a:hover { color: var(--fg); }
       <div class="copytext">
         <h3>Your question stays in view</h3>
         <p>A long answer can push your question off the screen. The band keeps it in sight while you read, without the blocks a host wraps around your words.</p>
-        <p>A pasted image shows as <code>[image]</code>. On the mobile app it’s a pane instead, and <code>/last-prompt</code> opens it again with the choices.</p>
+        <p>A pasted image shows as <code>[image]</code>, and <code>/last-prompt</code> brings the prompt and the choices back.</p>
       </div>
       <div class="surface" data-tabs>
         <div class="tabs" role="tablist" aria-label="Show it in">
@@ -501,14 +446,10 @@ footer a:hover { color: var(--fg); }
   <section class="block" aria-labelledby="where-h">
     <p class="kicker">Where it works</p>
     <h2 id="where-h">Wherever you run Claude&nbsp;Code</h2>
-    <p class="section-lede">Companion draws with the elements each surface provides, so its features fit in wherever you run Claude Code.</p>
+    <p class="section-lede">Companion has been tried in the terminal and in the VS Code extension, so those are the two it claims.</p>
     <dl class="surfaces">
       <div><dt>Terminal</dt><dd>The band, cut to your window, numbered choices you pick by typing their number, and the settings as a menu you work from the keys.</dd></div>
       <div><dt>VS Code</dt><dd>The band above the prompt box, each suggestion a quiet button and each switch a link.</dd></div>
-      <div><dt>Desktop app</dt><dd>The band above the prompt box, drawn the same way.</dd></div>
-      <div><dt>Mobile app</dt><dd>A pane with your last prompt and the suggestions.</dd></div>
-      <div><dt>No plugin UI</dt><dd>The suggestions as one line beneath the answer.</dd></div>
-      <div><dt>Headless runs</dt><dd>No suggestion call for <code>claude -p</code> or the Agent SDK, where nobody reads them.</dd></div>
     </dl>
   </section>
 
@@ -544,7 +485,7 @@ footer a:hover { color: var(--fg); }
     <p class="kicker">Install</p>
     <h2 id="install-h">Ask Claude to install it</h2>
     <div class="install">
-      <p class="section-lede" style="margin:0">Paste this into Claude Code, in the terminal, VS Code or the desktop app. Claude clones the repository, reads the code and tells you what it found, then installs the plugin from that clone. Start a new session to load it.</p>
+      <p class="section-lede" style="margin:0">Paste this into Claude Code, in the terminal or VS Code. Claude clones the repository, reads the code and tells you what it found, then installs the plugin from that clone. Start a new session to load it.</p>
       <div class="ask">
         <span class="ask-label">Paste into Claude Code</span>
         <p class="ask-text" id="cmd-install" data-text="Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.">Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.</p>
@@ -724,59 +665,6 @@ footer a:hover { color: var(--fg); }
   }
 
   var scenes = {
-    hero: async function (c) {
-      var user = c.$('[data-user]'), answer = c.$('[data-answer]'), quote = c.$('[data-quote]'), list = c.$('.choices'), choices = c.$$('.choice');
-      var restUser = user.textContent, restAnswer = answer.textContent, restChoices = choices.map(function (el) { return el.textContent; });
-      var picked = 'Show me the diff first';
-      var reply = 'Three files changed: the loader, its key lookup and two tests. The biggest change moves every key lookup into one function. Want a commit message for it?';
-      var next = ['↳ Write the commit message', '↳ Explain the key lookup change', '↳ Commit it on a new branch'];
-      await c.point(choices[1]);
-      choices[1].classList.add('is-hover');
-      await c.wait(450);
-      await press(choices[1]);
-      choices[1].classList.remove('is-hover');
-      c.park();
-      list.classList.add('fade', 'out');
-      await swap(user, picked);
-      await swap(quote, picked);
-      await type(answer, reply, 16);
-      await c.wait(500);
-      choices.forEach(function (el, i) { el.textContent = next[i]; });
-      list.classList.remove('out');
-      await c.wait(3200);
-      list.classList.add('out');
-      await swap(user, restUser);
-      await swap(quote, restUser);
-      await swap(answer, restAnswer);
-      choices.forEach(function (el, i) { el.textContent = restChoices[i]; });
-      list.classList.remove('out');
-      await c.wait(2600);
-    },
-    heroTerm: async function (c) {
-      // The digit typed into the empty prompt box sends that choice.
-      var user = c.$('[data-user]'), answer = c.$('[data-answer]'), quote = c.$('[data-quote]'), list = c.$('[data-choices]'), key = c.$('[data-key]');
-      var restUser = user.textContent, restAnswer = answer.textContent, restList = list.innerHTML;
-      var picked = 'Show me the diff first';
-      var reply = 'Three files changed: the loader, its key lookup and two tests. The biggest change moves every key lookup into one function. Want a commit message for it?';
-      await press(key);
-      c.$$('[data-choices] .ch')[1].classList.add('is-pick');
-      await c.wait(500);
-      list.classList.add('fade', 'out');
-      await swap(user, picked);
-      await swap(quote, picked);
-      await type(answer, reply, 16);
-      await c.wait(500);
-      list.innerHTML = choicesHTML(['Write the commit message', 'Explain the key lookup change', 'Commit it on a new branch']);
-      list.classList.remove('out');
-      await c.wait(3200);
-      list.classList.add('out');
-      await swap(user, restUser);
-      await swap(quote, restUser);
-      await swap(answer, restAnswer);
-      list.innerHTML = restList;
-      list.classList.remove('out');
-      await c.wait(2600);
-    },
     last: async function (c) {
       var quote = c.$('.quote');
       var prompts = [quote.textContent, 'why does the build fail on Windows?', 'rename the config loader please'];

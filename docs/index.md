@@ -114,6 +114,8 @@ The model and effort of the suggestions and of the grading are their own: fittin
 
 ## Surfaces
 
+Companion has been run on the real terminal and the real VS Code extension. The other rows below describe what the code does for a surface, checked against Claude Code's test kit only; they have not been tried on the real desktop app, mobile app or a headless run.
+
 | Where | What shows |
 |---|---|
 | Terminal | The band, cut to the terminal's width, its choices numbered for the number keys, the likeliest choice dim in the prompt box, and the settings as a menu |
