@@ -2,7 +2,7 @@
 
 A mod for Claude Code that adds small, useful features where you work, and is built to keep taking more. It starts with your last prompt in view, next messages you can click, and the right model for each task. See it in motion at [claudecompanion.vercel.app](https://claudecompanion.vercel.app).
 
-> **Status: v0.12.0.** What comes next is in the [milestones](https://github.com/alvaris924/claude-companion/milestones).
+> **Status: v0.13.0.** What comes next is in the [milestones](https://github.com/alvaris924/claude-companion/milestones).
 
 ## Features so far
 
@@ -62,6 +62,7 @@ The plugin is a hooks module, [`hooks/register.tsx`](hooks/register.tsx), on Cla
 | v0.10.0 | A quieter look, easy, mid and hard tasks graded by a model, a limit on switching in long conversations, a website |
 | v0.11.0 | A grader you choose, and grading twice to keep the harder grade |
 | v0.12.0 | A terminal that works from the keys; Suggest (now the default) offers a switch either way and keeps a mode per model; a reply must lean on the answer, not merely be short (experimental) |
+| v0.13.0 | Suggestions back after v0.12.0 showed none; the band in VS Code leaves your prompt to VS Code, with a "Last prompt" setting to bring it back |
 | v1.0.0 | Commands, settings and the state contract held stable, checked on every surface, screenshots in this README |
 
 ## Contributing
