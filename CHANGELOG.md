@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-22
+
 ### Changed
 
 - In VS Code the band no longer repeats your last prompt, since VS Code pins it above its answer. A "Last prompt" setting in `/companion` brings it back; the terminal always shows it. The ⋯ for the settings moves to the end of the band's first row ([ADR-0016](docs/adr/0016-the-band-leaves-the-prompt-to-vs-code.md), #38).
@@ -71,7 +73,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 - Suggestions are written by Sonnet 5.5 by default, in place of Fable 5.1, so a new install does not spend the most expensive model on every answer. Fable 5.1, Opus 5.5 and Haiku 5.5 stay one pick away in `/companion`, and a model already picked there is kept.
 
-[Unreleased]: https://github.com/alvaris924/claude-companion/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/alvaris924/claude-companion/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/alvaris924/claude-companion/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/alvaris924/claude-companion/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/alvaris924/claude-companion/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/alvaris924/claude-companion/compare/v0.10.0...v0.10.1
