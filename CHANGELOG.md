@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-22
+
 ### Added
 
 - Suggest mode, now the default for "Fit model and effort to each task": your turn runs on your own model and effort, the grade is asked in the background with no wait, and when it names another model than the one running, the band offers one button while the answer is still being written: "Switch to Opus 5.5 at max effort" for a hard task, "Switch to Haiku 5.5 at low effort" for an easy one (`0` in the terminal). Pressing it stops the answer and asks the prompt again there, and the task's follow-ups stay. Once the answer is in, a cheaper pick reads "Continue on Haiku 5.5 at low effort" and sends the follow-ups there without asking again. It says nothing when the grade names what you already run on, and makes no grading call at all when no grade could name anything else, as when every grade is set to "My model and effort". "Automatic" is the earlier behaviour, unchanged ([ADR-0013](docs/adr/0013-suggest-mode-the-grade-suggests-the-person-switches.md), #29).
@@ -61,7 +63,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 - Suggestions are written by Sonnet 5.5 by default, in place of Fable 5.1, so a new install does not spend the most expensive model on every answer. Fable 5.1, Opus 5.5 and Haiku 5.5 stay one pick away in `/companion`, and a model already picked there is kept.
 
-[Unreleased]: https://github.com/alvaris924/claude-companion/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/alvaris924/claude-companion/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/alvaris924/claude-companion/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/alvaris924/claude-companion/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/alvaris924/claude-companion/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/alvaris924/claude-companion/compare/v0.9.0...v0.10.0
