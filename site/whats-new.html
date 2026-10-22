@@ -201,6 +201,8 @@ html { scroll-behavior: smooth; }
   <p class="intro">Companion is a mod for Claude Code that adds small, useful features where you work. Here is what changed lately, and how to use each part.</p>
 
   <ul class="jump" aria-label="Jump to an entry">
+    <li><a href="#suggestions-back">Suggestions are back</a></li>
+    <li><a href="#prompt-option">VS Code leaves your prompt to VS Code</a></li>
     <li><a href="#terminal-keys">A terminal that works from the keys</a></li>
     <li><a href="#suggest-mode">Suggest: you press to switch</a></li>
     <li><a href="#model-mode">Each model keeps its own mode</a></li>
@@ -215,6 +217,47 @@ html { scroll-behavior: smooth; }
     <li><a href="#sonnet-default">Sonnet 5.5 by default</a></li>
     <li><a href="#last-prompt">Your last prompt in view</a></li>
   </ul>
+
+  <section class="day" aria-labelledby="d-22b">
+    <h2 class="date" id="d-22b">22 October 2026 <span class="tag">v0.13.0</span></h2>
+
+    <article id="suggestions-back">
+      <h3>Suggestions are back</h3>
+      <p>v0.12.0 showed no suggestions after an answer. Companion skips the suggestions for an answer you have already replied to, and its check for that was wrong: Claude Code starts your message’s own turn before Companion has finished noting the message, so every message looked like it was sent during its own answer.</p>
+      <p>The check now looks the moment you press Enter, at whether an answer is still running. Suggestions come back after each answer, in VS Code and in the terminal.</p>
+      <p class="note">If you installed v0.12.0, update with <code>git pull</code> in your clone and start a new session, or run <code>/reload-plugins</code>.</p>
+    </article>
+
+    <article id="prompt-option">
+      <h3>VS Code leaves your prompt to VS Code</h3>
+      <p>VS Code pins your prompt above its answer, so the band showed it a second time at the bottom. In VS Code the band now leaves the quote out. The ⋯ for the settings moves to the end of the first row, the <span class="ui">Suggested</span> label or the model line.</p>
+      <ol class="steps">
+        <li><span>Run <code>/companion</code>.</span></li>
+        <li><span>Under <span class="ui">Last prompt</span>, set <span class="ui">Show it in the band in VS Code</span> to <span class="ui">On</span> to bring the quote back.</span></li>
+      </ol>
+      <p class="note">The terminal always shows the quote, since nothing there pins it.</p>
+      <figure>
+        <div class="demo" data-demo="lastOpt" role="img" aria-label="The VS Code band without the last prompt; setting Last prompt to On adds the quote above the suggestions">
+          <div class="band">
+            <div class="band-label">Companion</div>
+            <div class="row" data-quote-row hidden><div class="quote">merge the parser work</div></div>
+            <div class="row"><div class="eyebrow" style="flex:1">Suggested</div><div class="more">⋯</div></div>
+            <div class="choices">
+              <div class="choice">↳ Open the pull request into dev</div>
+              <div class="choice">↳ Show me the diff first</div>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="group-h">Last prompt</div>
+            <div class="card">
+              <div class="r"><span>Show it in the band in VS Code</span><span class="v" data-val>Off</span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption>The band in VS Code, with Last prompt off and then on</figcaption>
+      </figure>
+    </article>
+  </section>
 
   <section class="day" aria-labelledby="d-22">
     <h2 class="date" id="d-22">22 October 2026 <span class="tag">v0.12.0</span></h2>
@@ -281,8 +324,7 @@ html { scroll-behavior: smooth; }
             <div class="demo" data-demo="suggest" role="img" aria-label="VS Code, on Opus 5.5: while the answer is written the band offers Haiku 5.5; once it is in, Continue on Haiku 5.5 sends the follow-ups there">
               <div class="band">
                 <div class="band-label">Companion</div>
-                <div class="row"><div class="quote">what is the difference between a mutex and a semaphore?</div><div class="more">⋯</div></div>
-                <div class="routed" data-fit>Easy task · Opus 5.5 at max effort · <span class="link">Switch to Haiku 5.5 at low effort</span></div>
+                <div class="row"><div class="routed" data-fit style="flex:1">Easy task · Opus 5.5 at max effort · <span class="link">Switch to Haiku 5.5 at low effort</span></div><div class="more">⋯</div></div>
               </div>
               <div class="status" data-status><span class="pulse" aria-hidden="true"></span><span data-status-text>Answer still being written</span></div>
             </div>
@@ -327,11 +369,10 @@ html { scroll-behavior: smooth; }
       <p>Deciding whether a short message is a reply, and so skips grading, used to be a plain word count: up to three words, whatever it said. That read an unrelated short message, “how are you” among them, as a reply and never graded it, so Suggest had nothing to offer for it.</p>
       <p>A short message is now a reply only when it leans on the last answer: an acknowledgement, a short continuation such as “why?” or “and the tests?”, or, outside an easy task, a short order such as “push it”. A short message that stands on its own is graded like anything else.</p>
       <figure>
-        <div class="demo" data-demo="reply" role="img" aria-label="On Sonnet 5.5: how are you stands on its own, is graded easy and offered Haiku 5.5; why? is a reply, stays with its task and is not graded">
-          <div class="band">
-            <div class="band-label">Companion</div>
-            <div class="row"><div class="quote" data-quote>how are you</div><div class="more">⋯</div></div>
-            <div class="routed" data-fit>Easy task · Sonnet 5.5 at high effort · <span class="link">Switch to Haiku 5.5 at low effort</span></div>
+        <div class="demo" data-demo="reply" role="img" aria-label="In the terminal on Sonnet 5.5: how are you stands on its own, is graded easy and offered Haiku 5.5; why? is a reply, stays with its task and is not graded">
+          <div class="term">
+            <div class="line bar"><span class="quote" data-quote>how are you</span><span class="dim">⋯</span></div>
+            <div class="line flow" data-fit><span class="dim">Easy task · Sonnet 5.5 at high effort</span>  <span class="ch"><span class="k">0:</span> Switch to Haiku 5.5 at low effort</span></div>
           </div>
           <div class="annot" data-annot>Stands on its own, so it is graded</div>
         </div>
@@ -792,6 +833,17 @@ html { scroll-behavior: smooth; }
       var quote = c.$('.quote');
       var prompts = [quote.textContent, 'why does the build fail on Windows?', 'rename the config loader please'];
       for (var i = 1; i <= prompts.length; i++) { await c.wait(2300); await swap(quote, prompts[i % prompts.length]); }
+    },
+    lastOpt: async function (c) {
+      // Last prompt Off -> On: the quote row appears above the suggestions; then it goes back to the resting frame.
+      var row = c.$('[data-quote-row]'), val = c.$('[data-val]');
+      await c.wait(2200);
+      await swap(val, 'On');
+      row.hidden = false;
+      await c.wait(3200);
+      row.hidden = true;
+      await swap(val, 'Off');
+      await c.wait(2200);
     },
     keys: async function (c) {
       // The digit typed into the empty prompt box sends that choice; the answer brings new ones.

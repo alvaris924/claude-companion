@@ -4,6 +4,7 @@ import type {
   EngineInterface,
   PromptOrigin,
   Register,
+  RenderElement,
   SelectOption,
   TurnStepChunk,
   TurnStepInput,
@@ -90,7 +91,8 @@ const BAND_FOCUS_HINT = 'ctrl+x tab, then ↑↓ and Enter to pick'
 const SETTINGS_HINT = '/companion for settings'
 const HOTKEY_COLUMNS = 3 // "1: " before a numbered choice
 const MENU_LABEL_COLUMNS = 24
-const MENU_ROWS = 22 // the menu's rows, its longest view's, asked of the terminal as the pane opens
+const MENU_ROWS = 24 // the menu's rows, its longest view's, asked of the terminal as the pane opens
+const PROMPT_NOTE = 'VS Code already pins your prompt above its answer, so the band there leaves it out unless this is on. The terminal always shows it.'
 const SAVED_NOTE = 'Saved for every session; other open sessions take a change at their next turn.'
 const LAST_MAX_CHARS = 160 // about two lines where the surface wraps the last prompt
 const PANE_MAX_CHARS = 600
@@ -237,6 +239,8 @@ type Settings = {
   onPress: 'send' | 'box'
   /** Whether a number typed into the terminal's empty prompt box picks that choice. */
   numberKeys: boolean
+  /** Whether the band outside the terminal shows the last prompt, which VS Code already pins above its answer. */
+  lastPrompt: boolean
   /** How each task's model and effort follow its grade: suggested (a button), switched on its own, or left alone. */
   fit: FitMode
   /** The mode picked while the session ran on each family, which `fit` stands in for where none was. */
@@ -393,8 +397,8 @@ let pending: Pending | undefined
 const fitted = new Map<string, FittedTurn>()
 // The main loop's running turn, whatever the settings: what a switch stops to ask the prompt again.
 let runningTurn: string | undefined
-// When each main-loop turn began, so a prompt sent while its answer ran is known as the next message already.
-const turnStarts = new Map<string, number>()
+// The main-loop turns the person sent another message during: their answers get no choices, the next message being in.
+const movedOn = new Set<string>()
 // Set once a fitted request failed before it answered: the rest of the session's turns go as the engine makes them.
 let isFitRefused = false
 // The session's own model and effort as last written to state, so a turn writes them again only when they change.
@@ -418,6 +422,7 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
     choices: Number(pick(stored.choices, CHOICE_COUNTS, '3')),
     onPress: pick(stored.onPress, PRESS_ACTIONS, 'send') as Settings['onPress'],
     numberKeys: typeof stored.numberKeys === 'boolean' ? stored.numberKeys : true,
+    lastPrompt: typeof stored.lastPrompt === 'boolean' ? stored.lastPrompt : false,
     // A store from before 0.12.0 holds the old switch: its "on" is Automatic, and its "off" stays off.
     fit: pick(stored.fit, FIT_MODES, typeof stored.route === 'boolean' ? (stored.route ? 'auto' : 'off') : DEFAULT_FIT) as FitMode,
     fitByModel: fitsFrom(stored.fitByModel),
@@ -1398,13 +1403,25 @@ function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, { hasPrompt, isW
  * and the choice. `dimColor` asks for the surface's secondary button, the dark one VS Code draws for the ⋯, rather
  * than its filled one; the choice is a Text child so it wraps inside its button.
  */
-function choiceList($: EngineInterface, ui: Parts, choices: readonly string[]) {
+function choiceList($: EngineInterface, ui: Parts, choices: readonly string[], trailing: RenderElement | null = null) {
   const { Box, Button, Text } = ui
+  const caption = (
+    <Text size="caption" weight="semibold" dimColor>
+      {SUGGESTED}
+    </Text>
+  )
   return (
     <Box key="choices" flexDirection="column" rowGap="xs">
-      <Text size="caption" weight="semibold" dimColor>
-        {SUGGESTED}
-      </Text>
+      {trailing === null ? (
+        caption
+      ) : (
+        <Box key="head" flexWrap="nowrap" columnGap={1}>
+          <Box key="caption" flexGrow={1} flexShrink={1}>
+            {caption}
+          </Box>
+          {trailing}
+        </Box>
+      )}
       {choices.map((choice, i) => (
         <Button key={`choice-${i + 1}`} label={choice} plain dimColor onPress={() => pressChoice($, choice, choices)}>
           <Text color="text">{`${MARKER} ${choice}`}</Text>
@@ -1479,7 +1496,8 @@ const ROUTE_ROWS: readonly MenuRow[] = [
   { field: 'grader', label: 'Grader', options: MODELS, about: 'The model that grades each new task, at low effort, as part of your plan’s usage.' },
   { field: 'grading', label: 'Grading', options: GRADINGS, about: 'Two calls keep the harder of two grades, for twice the grading cost.' },
 ]
-const MENU: readonly MenuRow[] = [...SUGGEST_ROWS, ...ROUTE_ROWS]
+const PROMPT_ROWS: readonly MenuRow[] = [{ field: 'lastPrompt', label: 'In VS Code', options: ON_OFF, about: PROMPT_NOTE }]
+const MENU: readonly MenuRow[] = [...SUGGEST_ROWS, ...ROUTE_ROWS, ...PROMPT_ROWS]
 
 /** A setting's value as its picker holds it: booleans as on or off, the number of choices as text. */
 function pickerValue(current: Settings, field: keyof Settings): string {
@@ -1579,6 +1597,10 @@ function settingsMenu($: EngineInterface, ui: Parts, current: Settings, view: st
       <Box key="routeRows" flexDirection="column" paddingLeft={2}>
         {ROUTE_ROWS.map(row => rowButton(row, false))}
       </Box>
+      <Text weight="semibold">Last prompt</Text>
+      <Box key="promptRows" flexDirection="column" paddingLeft={2}>
+        {PROMPT_ROWS.map(row => rowButton(row, false))}
+      </Box>
     </Box>
   )
 }
@@ -1674,6 +1696,8 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    // Read before next(e): the engine starts this prompt's own turn inside it, and its turn.start can run first.
+    const runningWhenSent = runningTurn
     const result = await next(e)
 
     // A dropped prompt never reached the session, and the machine's own deliveries are not "my prompt".
@@ -1681,6 +1705,8 @@ export const register: Register = on => {
 
     const text = ownWords(e.text)
     if (text.length > 0) {
+      // A message (not a command such as /companion) sent while an answer still ran is queued as the next one.
+      if (runningWhenSent !== undefined && e.command === undefined) movedOn.add(runningWhenSent)
       // A slash command's turns run as the command sets them, and a program nobody watches (claude -p, the Agent SDK
       // with no surface) picked its own model. An SDK host's prompt with a surface attached, as from the Claude app,
       // is the person's.
@@ -1695,7 +1721,6 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     // The main loop's turns take their task from the prompt that started them; a subagent's are its own.
     if (e.agentId === undefined) {
-      turnStarts.set(e.turnId, await $.clock.now())
       const current = await loadSettings($)
       // The mode kept for the session's model: /model, or a switch pressed, may have changed it since the last turn.
       const fit = fitFor(current, await noteSessionModel($))
@@ -1722,8 +1747,7 @@ export const register: Register = on => {
     const result = await next(e)
     const plan = e.agentId === undefined ? fitted.get(e.turnId)?.plan : undefined
     fitted.delete(e.turnId)
-    const startedAt = turnStarts.get(e.turnId)
-    turnStarts.delete(e.turnId)
+    const hasMovedOn = movedOn.delete(e.turnId)
     if (e.agentId === undefined && runningTurn === e.turnId) runningTurn = undefined
     // Main-thread turns that answered: a subagent's report, an interrupted turn or a refusal suggests nothing.
     if (e.agentId !== undefined || e.reason !== 'answer' || e.answer.trim().length === 0) return result
@@ -1732,8 +1756,6 @@ export const register: Register = on => {
     const current = await loadSettings($)
     const ask = epoch
     const prompt = await read($, last)
-    // A prompt sent while the answer ran is the next message already: there is nothing to suggest for this answer.
-    const hasMovedOn = prompt !== null && startedAt !== undefined && prompt.at > startedAt
 
     if ((await $.session.surfaces()).length > 0) {
       // The band or the pane shows them: asked on a timer, so the end of the turn never waits on the model.
@@ -1809,20 +1831,27 @@ export const register: Register = on => {
     const prompt = await read($, last)
     const idea = await read($, suggested)
     const fit = await read($, routed)
-    if (e.props.hasSurvey || (prompt === null && idea === null && fit === null)) return next(e)
+    // VS Code pins the prompt above its answer, so outside the terminal the band shows it only when asked to.
+    const isTerminal = e.surface === 'terminal'
+    const current = await shownSettings($)
+    const showsPrompt = prompt !== null && (isTerminal || current.lastPrompt)
+    if (e.props.hasSurvey || (!showsPrompt && idea === null && fit === null)) return next(e)
 
     const ui = $.ui.resolve(e)
     const { Box, Button, Markdown, Text } = ui
     // The terminal's columns are exact, so its lines are cut to fit. VS Code and the apps lay text out in their own
     // font, where the columns they report undercount the room (VS Code 2.1.300 said 42 for a band twice that wide),
     // so there the texts go whole and wrap, as markdown: the last prompt a quote, the choices rows of links.
-    const isTerminal = e.surface === 'terminal'
     const lastRoom = isTerminal ? Math.max(10, e.props.bodyColumns - QUOTE_COLUMNS - MORE_COLUMNS) : LAST_MAX_CHARS
-    const current = await shownSettings($)
+    const more = <Button key="settings" label={MORE} plain dimColor onPress={() => openSettings($)} />
+    const fitLine =
+      fit !== null && fitRow($, ui, fit, { hasPrompt: prompt !== null, isWorking: e.props.isWorking, isTerminal, hasNumberKeys: isTerminal && current.numberKeys })
+    // Without the quote, the ⋯ ends the band's first row: the model line, or else the "Suggested" label.
+    const moreOnFit = !showsPrompt && fit !== null
 
     return (
       <Box flexDirection="column" rowGap="xs">
-        {prompt !== null && (
+        {showsPrompt && prompt !== null && (
           <Box flexWrap="nowrap" columnGap={1}>
             {isTerminal ? (
               <Box key="prompt" flexGrow={1} flexShrink={1} borderStyle="quote" borderColor={QUOTE_COLOR} paddingLeft={1}>
@@ -1833,13 +1862,21 @@ export const register: Register = on => {
                 <Markdown text={quoteOf(prompt.text, lastRoom)} />
               </Box>
             )}
-            <Button key="settings" label={MORE} plain dimColor onPress={() => openSettings($)} />
+            {more}
           </Box>
         )}
-        {fit !== null &&
-          fitRow($, ui, fit, { hasPrompt: prompt !== null, isWorking: e.props.isWorking, isTerminal, hasNumberKeys: isTerminal && current.numberKeys })}
+        {moreOnFit ? (
+          <Box key="fitHead" flexWrap="nowrap" columnGap={1}>
+            <Box key="fitText" flexGrow={1} flexShrink={1}>
+              {fitLine}
+            </Box>
+            {more}
+          </Box>
+        ) : (
+          fitLine
+        )}
         {idea !== null && isTerminal && numberedChoices($, ui, idea.choices, e.props.bodyColumns, current)}
-        {idea !== null && !isTerminal && choiceList($, ui, idea.choices)}
+        {idea !== null && !isTerminal && choiceList($, ui, idea.choices, showsPrompt || moreOnFit ? null : more)}
       </Box>
     )
   })
@@ -2006,6 +2043,23 @@ export const register: Register = on => {
           )}
           <Text size="footnote" dimColor>
             {ROUTE_NOTE}
+          </Text>
+        </Box>
+        <Box key="promptGroup" flexDirection="column">
+          <Text size="footnote" weight="semibold" dimColor>
+            Last prompt
+          </Text>
+          <Box key="promptCard" flexDirection="column" borderStyle="round" borderColor={QUOTE_COLOR} paddingX="sm">
+            <Select
+              key="lastPrompt"
+              label="Show it in the band in VS Code"
+              value={current.lastPrompt ? 'on' : 'off'}
+              options={ON_OFF}
+              onSelect={value => changeSetting($, 'lastPrompt', value === 'on')}
+            />
+          </Box>
+          <Text size="footnote" dimColor>
+            {PROMPT_NOTE}
           </Text>
         </Box>
         <Text size="footnote" dimColor>
