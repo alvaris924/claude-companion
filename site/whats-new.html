@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>What’s New in Companion</title>
-<meta name="description" content="What changed in Companion, the Claude Code mod: a calmer band, the right model for each task, grouped settings and the first public release.">
+<meta name="description" content="What changed in Companion, the Claude Code mod: a terminal that works from the keys, Suggest for the right model in one press, a calmer band and the first public release.">
 <link rel="canonical" href="https://claudecompanion.vercel.app/whats-new">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="color-scheme" content="dark light">
@@ -13,7 +13,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Companion for Claude Code">
 <meta property="og:title" content="What’s New in Companion">
-<meta property="og:description" content="What changed in Companion, the Claude Code mod: a calmer band, the right model for each task, grouped settings and the first public release.">
+<meta property="og:description" content="What changed in Companion, the Claude Code mod: a terminal that works from the keys, Suggest for the right model in one press, a calmer band and the first public release.">
 <meta property="og:url" content="https://claudecompanion.vercel.app/whats-new">
 <meta name="twitter:card" content="summary">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -85,6 +85,23 @@ article p { margin: 0; max-width: 64ch; }
 .note { color: var(--muted); font-size: 15px; }
 .ui { font-weight: 550; }
 .pill { display: inline-block; font-size: 12px; font-weight: 500; color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; margin-left: 8px; vertical-align: 4px; background: var(--surface); }
+[hidden] { display: none !important; }
+
+/* Surface tabs: a demo shown in VS Code and in the terminal; a pick switches every tabbed demo on the page. */
+.surface { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.tabs { justify-self: start; display: inline-flex; gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; }
+.tab { font: inherit; font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--muted); background: transparent; border: 0; border-radius: 999px; padding: 4px 13px; cursor: pointer; }
+.tab:hover { color: var(--fg); }
+.tab[aria-selected="true"] { color: var(--fg); background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); }
+
+/* Beside the drawing: whether the answer is still being written, and notes that explain, set apart from the UI by a dashed edge. */
+.status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.pulse { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.status.done .pulse { animation: none; background: var(--muted); }
+@keyframes pulse { 50% { opacity: 0.3; } }
+.annot { justify-self: start; font-size: 12px; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 3px 8px; }
+.annot b { color: var(--fg); font-weight: 600; }
+.press-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 
 /* A demo: the surface it appears on, then the companion's own drawing inside it. */
 figure { margin: 6px 0 0; }
@@ -114,6 +131,17 @@ figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; }
 .term .dim { color: var(--muted); }
 .term .acc { color: var(--accent); }
 .term .line { white-space: pre; }
+/* The terminal's own drawing since 0.12.0: the quote bar, numbered choices, a dim hint, the settings menu's ring. */
+.term .flow { white-space: normal; }
+.term b { font-weight: 600; }
+.term .bar { display: flex; gap: 8px; border-left: 2px solid var(--quote); padding-left: 8px; }
+.term .quote { flex: 1; min-width: 0; border-left: 0; padding-left: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term .ch { display: inline-block; max-width: 100%; margin-right: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: top; }
+.term .k { color: var(--accent); }
+.term .rule { border-top: 1px solid var(--line); margin-block: 6px; }
+.term .ring { background: var(--fg); color: var(--term); }
+.term .ring .acc, .term .ring .k { color: inherit; }
+.term .is-pick { color: var(--accent); }
 
 .picker { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 14px; }
 .picker .h { display: flex; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--line); }
@@ -157,7 +185,8 @@ footer nav { display: flex; flex-wrap: wrap; gap: 16px; }
   .card .r { flex-direction: column; gap: 0; }
   .card .v { text-align: left; }
 }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } .caret { animation: none; } }
+@media (max-width: 480px) { .term { font-size: 12px; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } .caret, .pulse { animation: none; } }
 html { scroll-behavior: smooth; }
 </style>
 </head>
@@ -200,29 +229,77 @@ html { scroll-behavior: smooth; }
       </ol>
       <p class="note">Turn <span class="ui">Number keys</span> off in <code>/companion</code> if you’d rather type a number as usual.</p>
       <figure>
-        <div class="demo" data-demo="keys" role="img" aria-label="The terminal: three numbered choices, and a hint that a typed number sends one">
+        <div class="demo" data-demo="keys" role="img" aria-label="The terminal: three numbered choices under the last prompt; typing 2 into the empty prompt box sends the second">
           <div class="term">
-            <div class="line">1: Open the PR into dev&nbsp;&nbsp;&nbsp;2: Show the diff first&nbsp;&nbsp;&nbsp;3: Run the tests</div>
-            <div class="line"><span class="dim">type 1–3 to send · /companion for settings</span></div>
+            <div class="line bar"><span class="quote" data-quote>merge the parser work</span><span class="dim">⋯</span></div>
+            <div class="line flow" data-choices><span class="ch"><span class="k">1:</span> Open the PR into dev</span><span class="ch"><span class="k">2:</span> Show me the diff first</span><span class="ch"><span class="k">3:</span> Run the tests</span></div>
+            <div class="line dim">type 1–3 to send · /companion for settings</div>
+            <div class="rule"></div>
+            <div class="line"><span class="acc">&gt;</span> <span class="keycap" data-key>2</span></div>
           </div>
         </div>
-        <figcaption>Numbered choices, picked by their number</figcaption>
+        <figcaption>A choice’s number, typed into the empty prompt box, sends it</figcaption>
+      </figure>
+      <figure>
+        <div class="demo" data-demo="menu" role="img" aria-label="The settings menu in the terminal: the arrow keys move to Fit to each task, Enter lists its options, and 2 picks Automatic">
+          <div class="term">
+            <div data-list-view>
+              <div class="line"><b>Companion settings</b><span class="dim"> · ↑↓ to move · Enter to change · Esc to close</span></div>
+              <div class="line flow dim" data-about>The model that writes them, as part of your plan’s usage.</div>
+              <div class="line"><b>Suggested next messages</b></div>
+              <div class="line ring" data-row="model">  Model                   <span class="acc">Sonnet 5.5</span></div>
+              <div class="line" data-row="choices">  Number of choices       <span class="acc">3</span></div>
+              <div class="line"><b>Model and effort for each task</b></div>
+              <div class="line" data-row="fit">  Fit to each task        <span class="acc" data-val>Suggest</span></div>
+              <div class="line" data-row="hard">  Hard tasks              <span class="acc">Opus 5.5 at max effort</span></div>
+            </div>
+            <div data-options hidden>
+              <div class="line"><b>Fit to each task</b><span class="dim"> · ↑↓ to move · Enter or its number to pick · Esc to close</span></div>
+              <div class="line flow dim">A model grades each new task. Suggest changes nothing and offers a button when another model would fit; Automatic switches on its own. Each model keeps the mode you pick while on it.</div>
+              <div class="line ring" data-opt>  <span class="k">1:</span> Suggest: you press to switch  ✓</div>
+              <div class="line" data-opt>  <span class="k">2:</span> Automatic: switches on its own</div>
+              <div class="line" data-opt>  <span class="k">3:</span> Off</div>
+            </div>
+          </div>
+          <div class="press-row" aria-hidden="true">key <span class="keycap" data-key>↓</span></div>
+        </div>
+        <figcaption><code>/companion</code> in the terminal, worked from the keys</figcaption>
       </figure>
     </article>
 
     <article id="suggest-mode">
       <h3>Suggest: you press to switch</h3>
-      <p><span class="ui">Fit model and effort to each task</span> now defaults to <span class="ui">Suggest</span>, which changes nothing by itself: your task runs on your own model, and when another one would fit — up for hard work, down for an easy question — a button appears while the answer is still being written.</p>
+      <p><span class="ui">Fit model and effort to each task</span> now defaults to <span class="ui">Suggest</span>, which changes nothing by itself. Your task runs on your own model, and when another one would fit, up for hard work or down for an easy question, a button appears while the answer is still being written.</p>
       <p>Press it (<code>0</code> in the terminal) and the answer stops and is asked again there. Once the answer is in, a cheaper pick reads <span class="ui">Continue on Haiku 5.5 at low effort</span> instead, and sends the task’s follow-ups there with nothing asked again. Set it to <span class="ui">Automatic</span> for the old always-switch behaviour, or <span class="ui">Off</span> to grade nothing.</p>
       <figure>
-        <div class="demo" data-demo="suggest" role="img" aria-label="The band offering to switch an easy task from Opus 5.5 down to Haiku 5.5">
-          <div class="band">
-            <div class="band-label">Companion</div>
-            <div class="row"><div class="quote">what's the difference between a mutex and a semaphore?</div><div class="more">⋯</div></div>
-            <div class="routed">Easy task · Opus 5.5 at max effort &nbsp;<span class="link">0: Switch to Haiku 5.5 at low effort</span></div>
+        <div class="surface" data-tabs>
+          <div class="tabs" role="tablist" aria-label="Show it in">
+            <button class="tab" type="button" role="tab" id="sug-t-vscode" aria-controls="sug-p-vscode" aria-selected="true" data-surface="vscode">VS Code</button>
+            <button class="tab" type="button" role="tab" id="sug-t-terminal" aria-controls="sug-p-terminal" aria-selected="false" tabindex="-1" data-surface="terminal">Terminal</button>
+          </div>
+          <div id="sug-p-vscode" role="tabpanel" aria-labelledby="sug-t-vscode">
+            <div class="demo" data-demo="suggest" role="img" aria-label="VS Code, on Opus 5.5: while the answer is written the band offers Haiku 5.5; once it is in, Continue on Haiku 5.5 sends the follow-ups there">
+              <div class="band">
+                <div class="band-label">Companion</div>
+                <div class="row"><div class="quote">what is the difference between a mutex and a semaphore?</div><div class="more">⋯</div></div>
+                <div class="routed" data-fit>Easy task · Opus 5.5 at max effort · <span class="link">Switch to Haiku 5.5 at low effort</span></div>
+              </div>
+              <div class="status" data-status><span class="pulse" aria-hidden="true"></span><span data-status-text>Answer still being written</span></div>
+            </div>
+          </div>
+          <div id="sug-p-terminal" role="tabpanel" aria-labelledby="sug-t-terminal" hidden>
+            <div class="demo" data-demo="suggestTerm" role="img" aria-label="The terminal, on Opus 5.5: while the answer is written, 0 switches to Haiku 5.5; once it is in, 0 continues on Haiku 5.5">
+              <div class="term">
+                <div class="line bar"><span class="quote">what is the difference between a mutex and a semaphore?</span><span class="dim">⋯</span></div>
+                <div class="line flow" data-fit><span class="dim">Easy task · Opus 5.5 at max effort</span>  <span class="ch"><span class="k">0:</span> Switch to Haiku 5.5 at low effort</span></div>
+                <div class="rule"></div>
+                <div class="line"><span class="acc">&gt;</span> <span class="keycap" data-key>0</span></div>
+              </div>
+              <div class="status" data-status><span class="pulse" aria-hidden="true"></span><span data-status-text>Answer still being written</span></div>
+            </div>
           </div>
         </div>
-        <figcaption>A button appears only when another model would fit</figcaption>
+        <figcaption>While the answer runs, then once it is in</figcaption>
       </figure>
       <p class="note">A grading call is made only when a grade could name something other than your own model and effort.</p>
     </article>
@@ -231,15 +308,17 @@ html { scroll-behavior: smooth; }
       <h3>Each model keeps its own mode</h3>
       <p>Automatic can be on for Opus 5.5 while Suggest stays on Sonnet 5.5. A pick in <code>/companion</code> is saved for the model your session is on, and comes back whenever you return to it. Pressing a switch to a model set to Automatic moves the session there too, as <code>/model</code> would, so Automatic can fit the tasks that follow.</p>
       <figure>
-        <div class="demo" role="img" aria-label="Two rows: on Opus 5.5, Automatic; on Sonnet 5.5, Suggest">
+        <div class="demo" data-demo="modelMode" role="img" aria-label="Changing the session from Opus 5.5 to Sonnet 5.5 with /model brings back Sonnet's own mode, Suggest; back on Opus 5.5 it is Automatic again">
+          <div class="term"><div class="line"><span class="acc">&gt;</span> <span data-cmd></span></div></div>
+          <div class="annot">Session on <b data-model>Opus 5.5</b></div>
           <div class="stack">
+            <div class="group-h">Model and effort for each task</div>
             <div class="card">
-              <div class="r"><span>On Opus 5.5</span><span class="v">Automatic</span></div>
-              <div class="r"><span>On Sonnet 5.5</span><span class="v">Suggest</span></div>
+              <div class="r"><span>Fit model and effort to each task</span><span class="v" data-mode>Automatic</span></div>
             </div>
           </div>
         </div>
-        <figcaption>Each model remembers which mode you set it to</figcaption>
+        <figcaption>The setting follows the model the session runs on</figcaption>
       </figure>
     </article>
 
@@ -247,6 +326,17 @@ html { scroll-behavior: smooth; }
       <h3>A reply must lean on the answer <span class="pill">Experimental</span></h3>
       <p>Deciding whether a short message is a reply, and so skips grading, used to be a plain word count: up to three words, whatever it said. That read an unrelated short message, “how are you” among them, as a reply and never graded it, so Suggest had nothing to offer for it.</p>
       <p>A short message is now a reply only when it leans on the last answer: an acknowledgement, a short continuation such as “why?” or “and the tests?”, or, outside an easy task, a short order such as “push it”. A short message that stands on its own is graded like anything else.</p>
+      <figure>
+        <div class="demo" data-demo="reply" role="img" aria-label="On Sonnet 5.5: how are you stands on its own, is graded easy and offered Haiku 5.5; why? is a reply, stays with its task and is not graded">
+          <div class="band">
+            <div class="band-label">Companion</div>
+            <div class="row"><div class="quote" data-quote>how are you</div><div class="more">⋯</div></div>
+            <div class="routed" data-fit>Easy task · Sonnet 5.5 at high effort · <span class="link">Switch to Haiku 5.5 at low effort</span></div>
+          </div>
+          <div class="annot" data-annot>Stands on its own, so it is graded</div>
+        </div>
+        <figcaption>A short message is a reply only when it leans on the last answer</figcaption>
+      </figure>
       <p class="note">The pattern list is new and may occasionally grade a true continuation worded unusually, which costs a grading call, never a wrong answer.</p>
     </article>
   </section>
@@ -488,12 +578,56 @@ html { scroll-behavior: smooth; }
   });
 })();
 
+// Surface tabs: a pick in any one switches every tabbed demo on the page to that surface, and this browser remembers
+// it (the landing page keeps its own).
+(function () {
+  var KEY = 'companion-surface';
+  var groups = Array.prototype.slice.call(document.querySelectorAll('[data-tabs]'));
+  function show(surface) {
+    groups.forEach(function (group) {
+      Array.prototype.forEach.call(group.querySelectorAll('[role="tab"]'), function (tab) {
+        var on = tab.getAttribute('data-surface') === surface;
+        tab.setAttribute('aria-selected', on ? 'true' : 'false');
+        tab.tabIndex = on ? 0 : -1;
+        var panel = document.getElementById(tab.getAttribute('aria-controls'));
+        if (panel) panel.hidden = !on;
+      });
+    });
+  }
+  function pick(surface) {
+    show(surface);
+    try { localStorage.setItem(KEY, surface); } catch (e) {}
+  }
+  var saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) {}
+  if (saved === 'vscode' || saved === 'terminal') show(saved);
+  groups.forEach(function (group) {
+    var tabs = Array.prototype.slice.call(group.querySelectorAll('[role="tab"]'));
+    tabs.forEach(function (tab, i) {
+      tab.addEventListener('click', function () { pick(tab.getAttribute('data-surface')); });
+      tab.addEventListener('keydown', function (e) {
+        var to = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : null;
+        if (to === null) return;
+        e.preventDefault();
+        var next = tabs[(to + tabs.length) % tabs.length];
+        pick(next.getAttribute('data-surface'));
+        next.focus();
+      });
+    });
+  });
+})();
+
 // The demos play their interaction on a loop while in view. Every scene ends where it began: the finished state the
-// page shows at rest, so a thumbnail, a reduced-motion viewer and a paused demo all see the whole picture.
+// page shows at rest, so a thumbnail, a reduced-motion viewer and a paused demo all see the whole picture. A demo that
+// leaves view, or whose tab is closed, stops at its next pause and goes back to that resting frame.
 (function () {
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduce || !('IntersectionObserver' in window)) return;
   var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var STOP = {};
+  function choicesHTML(texts) {
+    return texts.map(function (text, i) { return '<span class="ch"><span class="k">' + (i + 1) + ':</span> ' + text + '</span>'; }).join('');
+  }
 
   async function swap(el, text) { el.classList.add('fade', 'out'); await wait(170); el.textContent = text; el.classList.remove('out'); await wait(170); }
   async function swapHTML(el, html) { el.classList.add('fade', 'out'); await wait(170); el.innerHTML = html; el.classList.remove('out'); await wait(170); }
@@ -511,12 +645,13 @@ html { scroll-behavior: smooth; }
   }
 
   function play(demo, scene) {
-    var visible = false, wake = null, cursor = null;
+    var visible = false, wake = null, cursor = null, rest = demo.innerHTML;
     new IntersectionObserver(function (entries) {
       visible = entries[0].isIntersecting;
       if (visible && wake) { var w = wake; wake = null; w(); }
     }, { threshold: 0.45 }).observe(demo);
     function untilVisible() { return visible ? Promise.resolve() : new Promise(function (r) { wake = r; }); }
+    function pause(ms) { return wait(ms).then(function () { if (!visible) throw STOP; }); }
     function corner() { var d = demo.getBoundingClientRect(); return 'translate(' + (d.width - 26) + 'px,' + (d.height - 26) + 'px)'; }
     function ensureCursor() {
       if (cursor) return cursor;
@@ -531,13 +666,13 @@ html { scroll-behavior: smooth; }
     var c = {
       $: function (s) { return demo.querySelector(s); },
       $$: function (s) { return Array.prototype.slice.call(demo.querySelectorAll(s)); },
-      wait: wait,
+      wait: pause,
       point: function (el, fx, fy) {
         var k = ensureCursor(), d = demo.getBoundingClientRect(), r = el.getBoundingClientRect();
         var x = r.left - d.left + r.width * (fx == null ? 0.3 : fx), y = r.top - d.top + r.height * (fy == null ? 0.6 : fy);
         k.classList.add('on');
         k.style.transform = 'translate(' + x + 'px,' + y + 'px)';
-        return wait(800);
+        return pause(800);
       },
       park: function () { var k = ensureCursor(); k.style.transform = corner(); k.classList.remove('on'); }
     };
@@ -545,7 +680,12 @@ html { scroll-behavior: smooth; }
       for (;;) {
         await untilVisible();
         await wait(1100);
-        try { await scene(c); } catch (e) { return; }
+        if (!visible) continue;
+        try { await scene(c); } catch (e) {
+          if (e !== STOP) return;
+          demo.innerHTML = rest;
+          cursor = null;
+        }
       }
     })();
   }
@@ -652,6 +792,133 @@ html { scroll-behavior: smooth; }
       var quote = c.$('.quote');
       var prompts = [quote.textContent, 'why does the build fail on Windows?', 'rename the config loader please'];
       for (var i = 1; i <= prompts.length; i++) { await c.wait(2300); await swap(quote, prompts[i % prompts.length]); }
+    },
+    keys: async function (c) {
+      // The digit typed into the empty prompt box sends that choice; the answer brings new ones.
+      var quote = c.$('[data-quote]'), list = c.$('[data-choices]'), key = c.$('[data-key]');
+      var restQuote = quote.textContent, restList = list.innerHTML;
+      await press(key);
+      c.$$('[data-choices] .ch')[1].classList.add('is-pick');
+      await c.wait(600);
+      list.classList.add('fade', 'out');
+      await swap(quote, 'Show me the diff first');
+      await c.wait(1300);
+      list.innerHTML = choicesHTML(['Write the commit message', 'Explain the key lookup change', 'Commit it on a new branch']);
+      list.classList.remove('out');
+      await c.wait(3000);
+      list.classList.add('out');
+      await swap(quote, restQuote);
+      list.innerHTML = restList;
+      list.classList.remove('out');
+      await c.wait(2400);
+    },
+    menu: async function (c) {
+      // ↓ ↓ to the mode, Enter lists its options, 2 picks Automatic; then it fades back to rest.
+      var rows = c.$$('[data-row]'), about = c.$('[data-about]'), listView = c.$('[data-list-view]'), options = c.$('[data-options]');
+      var opts = c.$$('[data-opt]'), val = c.$('[data-val]'), key = c.$('[data-key]'), term = c.$('.term');
+      var abouts = {
+        model: 'The model that writes them, as part of your plan’s usage.',
+        choices: 'How many it offers after each answer.',
+        fit: 'A model grades each new task. Suggest changes nothing and offers a button when another model would fit; Automatic switches on its own.',
+        hard: 'What planning, refactors, migrations and bugs with an unclear cause run on, or are suggested to switch to.'
+      };
+      function ring(i) {
+        rows.forEach(function (row, j) { row.classList.toggle('ring', j === i); });
+        about.textContent = abouts[rows[i].getAttribute('data-row')];
+      }
+      async function hit(label) { key.textContent = label; await press(key); }
+      await hit('↓'); ring(1); await c.wait(700);
+      await hit('↓'); ring(2); await c.wait(1000);
+      await hit('Enter'); listView.hidden = true; options.hidden = false; await c.wait(1200);
+      await hit('2'); opts[0].classList.remove('ring'); opts[1].classList.add('ring'); await c.wait(450);
+      options.hidden = true; listView.hidden = false; val.textContent = 'Automatic'; await c.wait(3000);
+      term.classList.add('fade', 'out');
+      await c.wait(300);
+      ring(0);
+      val.textContent = 'Suggest';
+      opts[1].classList.remove('ring');
+      opts[0].classList.add('ring');
+      key.textContent = '↓';
+      term.classList.remove('out');
+      await c.wait(2400);
+    },
+    suggest: async function (c) {
+      // While the answer runs: Switch to Haiku. Once it is in: Continue on Haiku, which sends the follow-ups there.
+      var fit = c.$('[data-fit]'), status = c.$('[data-status]'), statusText = c.$('[data-status-text]');
+      var restFit = fit.innerHTML, restStatus = statusText.textContent;
+      await c.wait(1800);
+      status.classList.add('done');
+      await swap(statusText, 'Answer is in');
+      await swapHTML(fit, 'Easy task · Opus 5.5 at max effort · <span class="link">Continue on Haiku 5.5 at low effort</span>');
+      await c.wait(900);
+      var link = c.$('[data-fit] .link');
+      await c.point(link, 0.5, 0.6);
+      link.classList.add('is-hover');
+      await c.wait(450);
+      c.park();
+      await swap(fit, 'Easy task · follow-ups on Haiku 5.5 at low effort');
+      await c.wait(3000);
+      fit.classList.add('out');
+      await c.wait(300);
+      fit.innerHTML = restFit;
+      statusText.textContent = restStatus;
+      status.classList.remove('done');
+      fit.classList.remove('out');
+      await c.wait(2200);
+    },
+    suggestTerm: async function (c) {
+      var fit = c.$('[data-fit]'), status = c.$('[data-status]'), statusText = c.$('[data-status-text]'), key = c.$('[data-key]');
+      var restFit = fit.innerHTML, restStatus = statusText.textContent;
+      await c.wait(1800);
+      status.classList.add('done');
+      await swap(statusText, 'Answer is in');
+      await swapHTML(fit, '<span class="dim">Easy task · Opus 5.5 at max effort</span>  <span class="ch"><span class="k">0:</span> Continue on Haiku 5.5 at low effort</span>');
+      await c.wait(1100);
+      await press(key);
+      await swapHTML(fit, '<span class="dim">Easy task · follow-ups on Haiku 5.5 at low effort</span>');
+      await c.wait(3000);
+      fit.classList.add('out');
+      await c.wait(300);
+      fit.innerHTML = restFit;
+      statusText.textContent = restStatus;
+      status.classList.remove('done');
+      fit.classList.remove('out');
+      await c.wait(2200);
+    },
+    modelMode: async function (c) {
+      // /model sonnet brings back Sonnet's own mode; /model opus brings back Opus's.
+      var cmd = c.$('[data-cmd]'), model = c.$('[data-model]'), mode = c.$('[data-mode]');
+      await c.wait(600);
+      await type(cmd, '/model sonnet', 60);
+      await c.wait(300);
+      cmd.textContent = '';
+      await swap(model, 'Sonnet 5.5');
+      await swap(mode, 'Suggest');
+      await c.wait(2800);
+      await type(cmd, '/model opus', 60);
+      await c.wait(300);
+      cmd.textContent = '';
+      await swap(model, 'Opus 5.5');
+      await swap(mode, 'Automatic');
+      await c.wait(2800);
+    },
+    reply: async function (c) {
+      // "why?" leans on the answer: a reply, ungraded. "how are you" stands on its own: graded, and Haiku is offered.
+      var quote = c.$('[data-quote]'), fit = c.$('[data-fit]'), annot = c.$('[data-annot]');
+      var restQuote = quote.textContent, restAnnot = annot.textContent;
+      await c.wait(2400);
+      fit.classList.add('out');
+      await c.wait(250);
+      fit.hidden = true;
+      await type(quote, 'why?', 70);
+      await swap(annot, 'Leans on the last answer, so it is a reply: nothing is graded');
+      await c.wait(3000);
+      await type(quote, restQuote, 60);
+      fit.hidden = false;
+      await c.wait(400);
+      fit.classList.remove('out');
+      await swap(annot, restAnnot);
+      await c.wait(2400);
     }
   };
 
