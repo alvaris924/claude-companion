@@ -84,6 +84,7 @@ article p { margin: 0; max-width: 64ch; }
 .steps li > span { min-width: 0; }
 .note { color: var(--muted); font-size: 15px; }
 .ui { font-weight: 550; }
+.pill { display: inline-block; font-size: 12px; font-weight: 500; color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; margin-left: 8px; vertical-align: 4px; background: var(--surface); }
 
 /* A demo: the surface it appears on, then the companion's own drawing inside it. */
 figure { margin: 6px 0 0; }
@@ -171,6 +172,10 @@ html { scroll-behavior: smooth; }
   <p class="intro">Companion is a mod for Claude Code that adds small, useful features where you work. Here is what changed lately, and how to use each part.</p>
 
   <ul class="jump" aria-label="Jump to an entry">
+    <li><a href="#terminal-keys">A terminal that works from the keys</a></li>
+    <li><a href="#suggest-mode">Suggest: you press to switch</a></li>
+    <li><a href="#model-mode">Each model keeps its own mode</a></li>
+    <li><a href="#reply-rule">A reply must lean on the answer</a></li>
     <li><a href="#grader-choice">Choose the grader</a></li>
     <li><a href="#grader">A grader that leans hard</a></li>
     <li><a href="#calmer-band">A calmer band</a></li>
@@ -181,6 +186,70 @@ html { scroll-behavior: smooth; }
     <li><a href="#sonnet-default">Sonnet 5.5 by default</a></li>
     <li><a href="#last-prompt">Your last prompt in view</a></li>
   </ul>
+
+  <section class="day" aria-labelledby="d-22">
+    <h2 class="date" id="d-22">22 October 2026 <span class="tag">v0.12.0</span></h2>
+
+    <article id="terminal-keys">
+      <h3>The terminal works from the keys</h3>
+      <p>Outside fullscreen, the terminal reports no pointer, so nothing in the band or the settings could be clicked. Every choice now takes its own number from the empty prompt box, a redo or switch button is <code>0</code>, and <code>/companion</code> opens a menu you drive with the keys alone.</p>
+      <ol class="steps">
+        <li><span>Send a prompt and wait for the choices.</span></li>
+        <li><span>Type a choice’s number to pick it, or <code>0</code> to redo or switch.</span></li>
+        <li><span>Run <code>/companion</code>: ↑↓ to move, Enter to change or list options, Esc to close.</span></li>
+      </ol>
+      <p class="note">Turn <span class="ui">Number keys</span> off in <code>/companion</code> if you’d rather type a number as usual.</p>
+      <figure>
+        <div class="demo" data-demo="keys" role="img" aria-label="The terminal: three numbered choices, and a hint that a typed number sends one">
+          <div class="term">
+            <div class="line">1: Open the PR into dev&nbsp;&nbsp;&nbsp;2: Show the diff first&nbsp;&nbsp;&nbsp;3: Run the tests</div>
+            <div class="line"><span class="dim">type 1–3 to send · /companion for settings</span></div>
+          </div>
+        </div>
+        <figcaption>Numbered choices, picked by their number</figcaption>
+      </figure>
+    </article>
+
+    <article id="suggest-mode">
+      <h3>Suggest: you press to switch</h3>
+      <p><span class="ui">Fit model and effort to each task</span> now defaults to <span class="ui">Suggest</span>, which changes nothing by itself: your task runs on your own model, and when another one would fit — up for hard work, down for an easy question — a button appears while the answer is still being written.</p>
+      <p>Press it (<code>0</code> in the terminal) and the answer stops and is asked again there. Once the answer is in, a cheaper pick reads <span class="ui">Continue on Haiku 5.5 at low effort</span> instead, and sends the task’s follow-ups there with nothing asked again. Set it to <span class="ui">Automatic</span> for the old always-switch behaviour, or <span class="ui">Off</span> to grade nothing.</p>
+      <figure>
+        <div class="demo" data-demo="suggest" role="img" aria-label="The band offering to switch an easy task from Opus 5.5 down to Haiku 5.5">
+          <div class="band">
+            <div class="band-label">Companion</div>
+            <div class="row"><div class="quote">what's the difference between a mutex and a semaphore?</div><div class="more">⋯</div></div>
+            <div class="routed">Easy task · Opus 5.5 at max effort &nbsp;<span class="link">0: Switch to Haiku 5.5 at low effort</span></div>
+          </div>
+        </div>
+        <figcaption>A button appears only when another model would fit</figcaption>
+      </figure>
+      <p class="note">A grading call is made only when a grade could name something other than your own model and effort.</p>
+    </article>
+
+    <article id="model-mode">
+      <h3>Each model keeps its own mode</h3>
+      <p>Automatic can be on for Opus 5.5 while Suggest stays on Sonnet 5.5. A pick in <code>/companion</code> is saved for the model your session is on, and comes back whenever you return to it. Pressing a switch to a model set to Automatic moves the session there too, as <code>/model</code> would, so Automatic can fit the tasks that follow.</p>
+      <figure>
+        <div class="demo" role="img" aria-label="Two rows: on Opus 5.5, Automatic; on Sonnet 5.5, Suggest">
+          <div class="stack">
+            <div class="card">
+              <div class="r"><span>On Opus 5.5</span><span class="v">Automatic</span></div>
+              <div class="r"><span>On Sonnet 5.5</span><span class="v">Suggest</span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption>Each model remembers which mode you set it to</figcaption>
+      </figure>
+    </article>
+
+    <article id="reply-rule">
+      <h3>A reply must lean on the answer <span class="pill">Experimental</span></h3>
+      <p>Deciding whether a short message is a reply, and so skips grading, used to be a plain word count: up to three words, whatever it said. That read an unrelated short message, “how are you” among them, as a reply and never graded it, so Suggest had nothing to offer for it.</p>
+      <p>A short message is now a reply only when it leans on the last answer: an acknowledgement, a short continuation such as “why?” or “and the tests?”, or, outside an easy task, a short order such as “push it”. A short message that stands on its own is graded like anything else.</p>
+      <p class="note">The pattern list is new and may occasionally grade a true continuation worded unusually, which costs a grading call, never a wrong answer.</p>
+    </article>
+  </section>
 
   <section class="day" aria-labelledby="d-21c">
     <h2 class="date" id="d-21c">21 October 2026 <span class="tag">v0.11.0</span></h2>

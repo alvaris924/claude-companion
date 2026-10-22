@@ -291,7 +291,7 @@ footer a:hover { color: var(--fg); }
       <div class="copytext">
         <h3>Suggestions you can click</h3>
         <p>After each answer, a model reads your prompt and the end of the reply, then offers what you’ll likely send next. You get three by default, or anywhere from one to five.</p>
-        <p>Click one to send it, or have a click put it in the box so you can edit first. In the terminal, Tab takes the likeliest and <code>/copy-next 2</code> copies the second.</p>
+        <p>Click one to send it, or have a click put it in the box so you can edit first. In the terminal, every choice takes its own number from the empty prompt box, Tab takes the likeliest, and <code>/copy-next 2</code> copies the second.</p>
       </div>
       <div class="demo" data-demo="term" role="img" aria-label="The terminal: three suggestions after Next, and the likeliest waiting dim in the prompt box">
         <div class="term">
@@ -304,9 +304,9 @@ footer a:hover { color: var(--fg); }
 
     <div class="feature" id="route">
       <div class="copytext">
-        <h3>The right model for each task <span class="pill">Opt-in</span></h3>
-        <p>Turn it on and Sonnet 5.5 grades each new task easy, mid or hard. Easy ones run on Haiku 5.5 at low effort, mid ones on Sonnet 5.5 at medium and hard ones on Opus 5.5 at max, and you pick what each grade runs on. In a very long conversation a switch costs more, so you can set a limit past which only hard tasks switch. You can also choose the model that grades, or grade twice and keep the harder grade.</p>
-        <p>The band shows every task’s grade and the model it ran on, with a link to ask again on your own. Replies stay with their task, so a “yes” after hard work stays on the hard model.</p>
+        <h3>The right model for each task</h3>
+        <p>Sonnet 5.5 grades each new task easy, mid or hard. By default it only suggests: your task runs on your own model, and when another one would fit — up for hard work, down for an easy question — a button appears while the answer is still being written, or, once it is in, a quieter one that sends what follows there instead. Turn on Automatic and it switches on its own: easy on Haiku 5.5, mid on Sonnet 5.5, hard on Opus 5.5 at max, each yours to change.</p>
+        <p>The band shows every task’s grade and the model it ran on, with a link back to your own. Replies stay with their task, so a quick “why?” after hard work stays on the hard model. Each model remembers which of the two you set it to, so Automatic can run on Opus while Suggest stays on Sonnet.</p>
       </div>
       <div class="demo" data-demo="route" role="img" aria-label="The band shows each task's grade and model: an easy question on Haiku 5.5, a mid task on Sonnet 5.5, a hard one on Opus 5.5">
         <div class="band">

@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Suggest mode, now the default for "Fit model and effort to each task": your turn runs on your own model and effort, the grade is asked in the background with no wait, and when it names another model than the one running, the band offers one button while the answer is still being written: "Switch to Opus 5.5 at max effort" for a hard task, "Switch to Haiku 5.5 at low effort" for an easy one (`0` in the terminal). Pressing it stops the answer and asks the prompt again there, and the task's follow-ups stay. Once the answer is in, a cheaper pick reads "Continue on Haiku 5.5 at low effort" and sends the follow-ups there without asking again. It says nothing when the grade names what you already run on, and makes no grading call at all when no grade could name anything else, as when every grade is set to "My model and effort". "Automatic" is the earlier behaviour, unchanged ([ADR-0013](docs/adr/0013-suggest-mode-the-grade-suggests-the-person-switches.md), #29).
+- Each model keeps its own mode: a pick in `/companion` is saved for the model the session runs on, which the setting then shows, and every turn runs under the mode kept for the session's model, so Automatic can be on for Opus while Sonnet keeps Suggest. A suggested switch to a model set to Automatic reads "Switch to Opus 5.5 with Automatic on", and pressing it moves the session there with `/model`, which in the terminal also makes it the default for new sessions. The store adds `fitByModel` ([ADR-0014](docs/adr/0014-each-model-keeps-its-own-mode.md), #29).
+- In the terminal, a choice's number typed into the empty prompt box picks it, the way Claude Code's own surveys take their answers: the choices are numbered, a dim line under them says so, and "Ask again" is 0. A "Number keys" setting turns this off (#29).
+- In the terminal, `/companion` opens a menu that takes the keys at once: a row per setting with its value, ↑↓ to move, Enter to flip a switch or list a setting's numbered options, Esc to close, and a line atop it on what the highlighted setting does (#29).
+- **Experimental:** a short message is a reply, which continues the running task with no new grading, only when it leans on the last answer — an acknowledgement ("ok thanks"), a short continuation ("why?", "and the tests?", "go on"), or, outside an easy task, a short order ("push it") — not merely because it is short. A short message that stands on its own, such as "how are you", used to be absorbed into whatever task ran before it and never graded; it now starts a task and is graded like any other ([ADR-0015](docs/adr/0015-a-reply-must-lean-on-the-answer.md), #29).
+
+### Changed
+
+- The setting that fitted each task's model on or off is a three-way setting, `fit`: Suggest, Automatic and Off. A stored `route: true` reads as Automatic and `route: false` stays Off, so nobody's choice moves; a store with neither is Suggest, and `route` is still written for sessions on an earlier version (#29).
+
+### Fixed
+
+- The choices for an answer were written against a prompt the person had already sent while that answer ran, so they read as replies to the wrong message. Nothing is asked for an answer the person has already moved past (#29).
+- The terminal's settings opened a third of the screen tall, hid most settings, and took no keys until ctrl+x tab; the choices looked like buttons that no key or click reached (#29).
+
 ## [0.11.0] - 2026-10-21
 
 ### Added

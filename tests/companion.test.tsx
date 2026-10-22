@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 import type { ModelUsage, On, RenderSurface, TurnStepInput } from 'claude-code'
 
-import { REDO_HREF, gradeOf, gradeTask, isOrder, nextLevel } from '../hooks/register'
+import { REDO_HREF, canSuggest, familyOf, fitFor, gradeOf, gradeTask, isElsewhere, isOrder, isReply, isStronger, nextLevel, pickHint, settingsFrom, shortLabel, storedOf } from '../hooks/register'
 
 const PLUGIN = 'companion'
 const PANE = 'last-prompt'
@@ -51,6 +51,10 @@ type Setup = {
    * answer for each call in turn. "none" is a call that gives no answer.
    */
   grades?: Readonly<Record<string, string | readonly string[]>>
+  /** The session's model as `$.session.model()` answers it; absent, it answers nothing a model could be read from. */
+  sessionModel?: string
+  /** Whether a slash command a plugin runs fails, as on a host that does not have it. */
+  commandsFail?: boolean
 }
 
 /** What the engine did beneath the plugins, as the tests read it back. */
@@ -63,12 +67,22 @@ type World = {
   steps: { model: string; effort: TurnStepInput['effort'] }[]
   box: string
   opened: string[]
+  /** What each pane was opened with: its id, title, and the keys and rows it asked for. */
+  openedWith: Readonly<Record<string, unknown>>[]
+  /** How far each scroll the plugins let through moved a window, in rows. */
+  scrolled: number[]
+  /** The turns the plugins cancelled while they ran. */
+  aborted: string[]
   submitted: string[]
   offered: string[]
   filled: string[]
   copied: string[]
   toasts: string[]
   ran: (readonly string[])[]
+  /** The slash commands the plugins ran, as typed: "/model claude-opus-5-5". */
+  commands: string[]
+  /** The session's model, which a /model the plugins run changes. */
+  sessionModel: string | undefined
 }
 
 /**
@@ -77,7 +91,7 @@ type World = {
  * opening (placed wherever a surface attaches), and a Windows host whose processes all succeed.
  */
 function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): World {
-  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused, grades = {} } = setup
+  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused, grades = {}, sessionModel, commandsFail = false } = setup
   mock.store(on, stored === undefined ? {} : { settings: stored })
   const callsFor: Record<string, number> = {} // grading calls so far, by the request graded
   const world: World = {
@@ -87,15 +101,27 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     steps: [],
     box: '',
     opened: [],
+    openedWith: [],
+    scrolled: [],
+    aborted: [],
     submitted: [],
     offered: [],
     filled: [],
     copied: [],
     toasts: [],
     ran: [],
+    commands: [],
+    sessionModel,
   }
 
   on('session.surfaces', () => ({ value: surfaces }))
+  on('session.model', () => ({ value: world.sessionModel ?? '' }))
+  on('command.run', (_, e) => {
+    if (commandsFail) throw new Error('no such command here')
+    world.commands.push(`/${e.command} ${e.args}`.trim())
+    if (e.command === 'model') world.sessionModel = e.args
+    return { text: '' }
+  })
   on('prompt.submit', (_, e) => {
     world.submitted.push(e.text)
     if (e.origin.kind === 'composer') world.box = '' // the composer empties as it sends
@@ -143,7 +169,17 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
   })
   on('ui.open', (_, e) => {
     world.opened.push(e.id)
+    world.openedWith.push({ ...e })
     return { value: surfaces.length > 0 ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'no surface draws it' } }
+  })
+  on('ui.focus', () => ({})) // the ring lands where the person's keys moved it
+  on('ui.scroll', (_, e) => {
+    world.scrolled.push(e.by)
+    return {}
+  })
+  on('turn.abort', (_, e) => {
+    world.aborted.push(e.turnId)
+    return { value: undefined }
   })
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: contextTokens, window: 1_000_000 }, rateLimits: [] } }))
   on('turn.step', async function* (_, e) {
@@ -306,8 +342,8 @@ describe('companion', () => {
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect(await promptShown(band)).toBe('merge the parser work')
     expect(await choicesDrawn(band)).toEqual([...CHOICES])
-    expect((await band.find({ key: 'choice-1' }))?.props.variant).toBe('primary')
-    expect((await band.find({ key: 'choice-2' }))?.props.variant).toBeUndefined()
+    expect((await band.find({ key: 'choice-1' }))?.props).toMatchObject({ plain: true, hotkey: '1' })
+    expect((await band.find({ key: 'choice-2' }))?.props).toMatchObject({ plain: true, hotkey: '2' })
     await band.unmount()
   })
 
@@ -417,10 +453,10 @@ describe('companion', () => {
       }
       await band.unmount()
     }
-    // The terminal keeps its quote bar and its row of buttons.
+    // The terminal keeps its quote bar, and numbers its choices.
     const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect((await terminal.find({ key: 'prompt' }))?.props).toMatchObject({ borderStyle: 'quote', borderColor: 'promptBorder' })
-    expect((await terminal.find({ key: 'choice-1' }))?.props).toMatchObject({ variant: 'primary', label: CHOICES[0] })
+    expect((await terminal.find({ key: 'choice-1' }))?.props).toMatchObject({ plain: true, hotkey: '1', label: CHOICES[0] })
     await terminal.unmount()
 
     const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
@@ -459,7 +495,7 @@ describe('companion', () => {
   test('the settings pane shows the stored settings', async ($, on) => {
     engine(on, ['vscode'], { stored: { model: 'claude-opus-5-5', effort: 'high', choices: '2', onPress: 'box' } })
 
-    for (const surface of ['vscode', 'terminal'] as const) {
+    for (const surface of ['vscode', 'desktop'] as const) {
       const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface })
       expect((await pane.find({ key: 'suggest' }))?.props.value).toBe('on')
       expect((await pane.find({ key: 'model' }))?.props.value).toBe('claude-opus-5-5')
@@ -468,6 +504,14 @@ describe('companion', () => {
       expect((await pane.find({ key: 'onPress' }))?.props.value).toBe('box')
       await pane.unmount()
     }
+    // The terminal's menu: a row per setting, its value after it.
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    expect((await menu.find({ key: 'setting-suggest' }))?.text).toBe(`${'Suggest next messages'.padEnd(24)}On`)
+    expect((await menu.find({ key: 'setting-model' }))?.text).toBe(`${'Model'.padEnd(24)}Opus 5.5`)
+    expect((await menu.find({ key: 'setting-effort' }))?.text).toBe(`${'Thinking effort'.padEnd(24)}High`)
+    expect((await menu.find({ key: 'setting-choices' }))?.text).toBe(`${'Number of choices'.padEnd(24)}2`)
+    expect((await menu.find({ key: 'setting-onPress' }))?.text).toBe(`${'Picking a choice'.padEnd(24)}Puts it in the box to edit`)
+    await menu.unmount()
   })
 
   test('picks in the settings pane are saved, drawn back, and in force for the next choices', async ($, on) => {
@@ -555,7 +599,7 @@ describe('companion', () => {
 
     const band = await $.ui.mount({ ...narrow, surface: 'terminal' })
     const [cut] = await choicesDrawn(band)
-    expect(cut).toBe(`${long.slice(0, 42 - 'Next: '.length - 4 - 1)}…`)
+    expect(cut).toBe(`${long.slice(0, 42 - '1: '.length - 1)}…`)
     await band.unmount()
   })
 
@@ -804,9 +848,193 @@ describe('companion', () => {
   })
 })
 
-describe('task routing', () => {
-  test('is off by default: nothing is graded, requests go as the engine made them, and the band shows no task', async ($, on) => {
+describe('working the mod from the keyboard', () => {
+  /** One answered turn: the band then offers the three choices. */
+  async function answered($: Engine, world: World): Promise<void> {
+    await typed($, 'merge the parser work')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+  }
+
+  /** The person moves the settings menu's ring onto `element`, as an arrow key does. */
+  async function ringOn($: Engine, element: string): Promise<void> {
+    await $.ui.focus({ component: 'Pane', requestId: SETTINGS, plugin: PLUGIN, element, origin: { kind: 'person' } })
+  }
+
+  test('the terminal numbers the choices as Claude Code numbers a survey, and says under them how to pick one', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    await answered($, world)
+
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    for (const [i, choice] of CHOICES.entries()) {
+      expect((await band.find({ key: `choice-${i + 1}` }))?.props).toMatchObject({ label: choice, plain: true, hotkey: String(i + 1) })
+    }
+    expect((await band.find({ key: 'hint' }))?.text).toBe('type 1–3 to send · /companion for settings')
+    await band.press({ key: 'choice-2' }) // what the engine does with a 2 typed into the empty prompt box
+    expect(world.submitted).toEqual(['merge the parser work', CHOICES[1]])
+    await band.unmount()
+
+    // Under a pointer they keep their look: no numbers, no line about keys.
+    await answered($, world)
+    const vscode = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    expect((await vscode.find({ key: 'choice-1' }))?.props.hotkey).toBeUndefined()
+    expect(await vscode.find({ key: 'hint' })).toBeUndefined()
+    await vscode.unmount()
+  })
+
+  test('the line under the choices follows the settings: where a pick goes, and the number keys switched off', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { onPress: 'box' } })
+    await answered($, world)
+
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'hint' }))?.text).toBe('type 1–3 to edit before sending · /companion for settings')
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    await menu.press({ key: 'setting-numberKeys' })
+    await band.redraw()
+    // Off, a number is typed as usual: the choices are buttons the band's focus reaches.
+    expect((await band.find({ key: 'choice-1' }))?.props.hotkey).toBeUndefined()
+    expect((await band.find({ key: 'choice-1' }))?.props.plain).toBeUndefined()
+    expect((await band.find({ key: 'hint' }))?.text).toBe('ctrl+x tab, then ↑↓ and Enter to pick · /companion for settings')
+    await menu.unmount()
+    await band.unmount()
+
+    expect(pickHint({ numberKeys: true, onPress: 'send' }, 1)).toBe('type 1 to send')
+  })
+
+  test('/companion opens the settings with the keys, at their full height, and Esc closes them', async ($, on) => {
     const world = engine(on, ['terminal'])
+
+    const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    expect(ran.text).toBe('Companion settings opened.')
+    expect(world.openedWith).toEqual([{ id: SETTINGS, title: 'Companion settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 22 }])
+  })
+
+  test('the terminal menu: a row per setting with its value, the ring starting on the first, and keys said under it', async ($, on) => {
+    engine(on, ['terminal'], { stored: { route: true } })
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    const rows = ['suggest', 'model', 'effort', 'choices', 'onPress', 'numberKeys', 'fit', 'easy', 'mid', 'hard', 'limit', 'grader', 'grading']
+    for (const field of rows) expect(await menu.find({ key: `setting-${field}` })).toBeDefined()
+    expect((await menu.find({ key: 'setting-suggest' }))?.props.autoFocus).toBe(true)
+    expect((await menu.find({ key: 'setting-fit' }))?.text).toBe(`${'Fit to each task'.padEnd(24)}Automatic`)
+    expect((await menu.find({ key: 'setting-easy' }))?.text).toBe(`${'Easy tasks'.padEnd(24)}Haiku 5.5 at low effort`)
+    expect((await menu.find({ key: 'setting-limit' }))?.text).toBe(`${'Switch limit'.padEnd(24)}No limit`)
+    expect((await menu.find({ key: 'setting-grader' }))?.text).toBe(`${'Grader'.padEnd(24)}Sonnet 5.5`)
+    expect((await menu.find({ key: 'setting-grading' }))?.text).toBe(`${'Grading'.padEnd(24)}One call`)
+    expect((await menu.find({ key: 'title' }))?.text).toBe('Companion settings · ↑↓ to move · Enter to change · Esc to close')
+    expect((await menu.find({ key: 'about' }))?.text).toBe('After each answer a model writes the messages you are likeliest to send next.')
+    await menu.unmount()
+
+    expect(shortLabel('Sonnet 5.5: the default')).toBe('Sonnet 5.5')
+    expect(shortLabel('Haiku 5.5 at low effort')).toBe('Haiku 5.5 at low effort')
+  })
+
+  test('the line atop the menu says what the row under the ring does', async ($, on) => {
+    engine(on, ['terminal'])
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    await ringOn($, 'setting-grader')
+    expect((await menu.find({ key: 'about' }))?.text).toBe('The model that grades each new task, at low effort, as part of your plan’s usage.')
+    await ringOn($, 'setting-numberKeys')
+    expect((await menu.find({ key: 'about' }))?.text).toContain('typed into the empty prompt box picks it')
+    await menu.unmount()
+  })
+
+  test('in a terminal too short for the menu, ↑↓ move the ring a row as where it fits; the wheel still scrolls', async ($, on) => {
+    const world = engine(on, ['terminal'])
+    const scroll = { component: 'Pane', requestId: SETTINGS, offset: 0, bodyRows: 10, contentRows: 18 } as const
+    const arrow = async (by: number) => {
+      const kept = await $.ui.scroll({ ...scroll, by, origin: { kind: 'person' } })
+      await world.clock.advance(1)
+      return kept
+    }
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    const about = async () => (await menu.find({ key: 'about' }))?.text
+    expect(await arrow(1)).toEqual({}) // the window stays where it is
+    expect(await about()).toBe('The model that writes them, as part of your plan’s usage.')
+    await arrow(1)
+    expect(await about()).toBe('How long that model thinks before it writes them.')
+    await arrow(-1)
+    await arrow(-1)
+    await arrow(-1) // past the first row it stays there
+    expect(await about()).toBe('After each answer a model writes the messages you are likeliest to send next.')
+    expect(world.scrolled).toEqual([])
+
+    await $.ui.scroll({ ...scroll, by: 1, origin: { kind: 'person' }, pointer: { column: 4, row: 2 } })
+    expect(world.scrolled).toEqual([1])
+    await menu.unmount()
+  })
+
+  test('Enter on a switch flips it where it stands, saved for the next answer', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    await menu.press({ key: 'setting-suggest' })
+    expect((await menu.find({ key: 'setting-suggest' }))?.text).toBe(`${'Suggest next messages'.padEnd(24)}Off`)
+    expect(await menu.find({ key: 'option-on' })).toBeUndefined() // no list for a switch
+    await menu.unmount()
+
+    await answered($, world)
+    expect(world.requests).toEqual([])
+  })
+
+  test('Enter on a setting lists its options numbered, its own marked and under the ring; a pick saves it and goes back', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy' } })
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    await menu.press({ key: 'setting-grader' })
+    expect((await menu.find({ key: 'title' }))?.text).toBe('Grader · ↑↓ to move · Enter or its number to pick · Esc to close')
+    expect((await menu.find({ key: 'option-claude-fable-5-1' }))?.props).toMatchObject({ plain: true, hotkey: '1' })
+    expect((await menu.find({ key: 'option-claude-haiku-5-5' }))?.props).toMatchObject({ plain: true, hotkey: '4' })
+    expect((await menu.find({ key: 'option-claude-sonnet-5-5' }))?.text).toBe('Sonnet 5.5: the default  ✓')
+
+    // Back on the list, the line under it speaks of the row just changed, where the ring goes. (The kit draws no ring
+    // to move; the terminal moves it onto the setting's own option, then back onto its row.)
+    await menu.press({ key: 'option-claude-haiku-5-5' })
+    expect((await menu.find({ key: 'setting-grader' }))?.text).toBe(`${'Grader'.padEnd(24)}Haiku 5.5`)
+    expect((await menu.find({ key: 'about' }))?.text).toBe('The model that grades each new task, at low effort, as part of your plan’s usage.')
+    await menu.unmount()
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    expect(world.graded.map(call => call.model)).toEqual(['claude-haiku-5-5'])
+    expect(world.steps).toEqual([HAIKU_LOW])
+  })
+
+  test('a list longer than nine numbers its tenth 0 and lines the rest up under the others', async ($, on) => {
+    engine(on, ['terminal'], { stored: { route: true } })
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    await menu.press({ key: 'setting-easy' })
+    expect((await menu.find({ key: 'option-claude-haiku-5-5:low' }))?.text).toBe('Haiku 5.5 at low effort  ✓')
+    expect((await menu.find({ key: 'option-claude-fable-5-1:max' }))?.props.hotkey).toBe('0')
+    expect((await menu.find({ key: 'option-own' }))?.props.hotkey).toBeUndefined()
+    expect((await menu.find({ key: 'option-own' }))?.text).toBe('   My model and effort')
+    await menu.press({ key: 'option-own' })
+    expect((await menu.find({ key: 'setting-easy' }))?.text).toBe(`${'Easy tasks'.padEnd(24)}My model and effort`)
+    await menu.unmount()
+  })
+
+  test('/companion starts the menu at its list, whichever setting was open when it closed', async ($, on) => {
+    const world = engine(on, ['terminal'])
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    await menu.press({ key: 'setting-model' })
+    expect(await menu.find({ key: 'option-claude-opus-5-5' })).toBeDefined()
+    await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    await menu.redraw()
+    expect(await menu.find({ key: 'setting-model' })).toBeDefined()
+    expect(await menu.find({ key: 'option-claude-opus-5-5' })).toBeUndefined()
+    expect(world.opened).toEqual([SETTINGS])
+    await menu.unmount()
+  })
+})
+
+describe('task routing', () => {
+  test('off: nothing is graded, requests go as the engine made them, and the band shows no task', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { fit: 'off' } })
 
     await typed($, QUESTION)
     await runTurn($, 't1', QUESTION, SONNET_HIGH)
@@ -830,7 +1058,7 @@ describe('task routing', () => {
     expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW])
     const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect((await terminal.find({ key: 'task' }))?.text).toBe('Easy task · Haiku 5.5 at low effort')
-    expect((await terminal.find({ key: 'redo' }))?.props.label).toBe('Ask again on Opus 5.5')
+    expect((await terminal.find({ key: 'redo' }))?.props).toMatchObject({ label: 'Ask again on Opus 5.5', plain: true, hotkey: '0' })
     await terminal.unmount()
     // Elsewhere one markdown line: what the turn ran on, then the redo as a link the plugin answers.
     for (const surface of ['desktop', 'vscode'] as const) {
@@ -1260,14 +1488,14 @@ describe('task routing', () => {
     const world = engine(on, ['vscode'], { showsSuggestions: false, grades: { [hard]: 'hard' } })
 
     const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
-    expect((await pane.find({ key: 'route' }))?.props.value).toBe('off')
+    expect((await pane.find({ key: 'fit' }))?.props.value).toBe('suggest')
     expect((await pane.find({ key: 'easy' }))?.props.value).toBe('claude-haiku-5-5:low')
     expect((await pane.find({ key: 'mid' }))?.props.value).toBe('claude-sonnet-5-5:medium')
     expect((await pane.find({ key: 'hard' }))?.props.value).toBe('claude-opus-5-5:max')
-    await pane.select({ key: 'route', value: 'on' })
+    await pane.select({ key: 'fit', value: 'auto' })
     await pane.select({ key: 'hard', value: 'claude-fable-5-1:high' })
     await pane.redraw()
-    expect((await pane.find({ key: 'route' }))?.props.value).toBe('on')
+    expect((await pane.find({ key: 'fit' }))?.props.value).toBe('auto')
     expect((await pane.find({ key: 'hard' }))?.props.value).toBe('claude-fable-5-1:high')
     await pane.unmount()
 
@@ -1302,7 +1530,7 @@ describe('task routing', () => {
 
     const ran = await run()
     expect(ran.text).toContain(
-      'Clicking a choice: Sends it as my message · Fit to the task: on (easy tasks: My model and effort; ' +
+      'Clicking a choice: Sends it as my message · Fit to the task: automatic (easy tasks: My model and effort; ' +
         'mid tasks: Sonnet 5.5 at medium effort; hard tasks: Opus 5.5 at max effort; switching at any length)',
     )
     expect(ran.text).not.toContain('in this session')
@@ -1396,5 +1624,546 @@ describe('task routing', () => {
     for (const order of orders) expect(nextLevel(order, 'easy', [])).toEqual({ level: 'mid', isNew: true })
     for (const reply of replies) expect(nextLevel(reply, 'easy', [])).toEqual({ level: 'easy', isNew: false })
     expect(nextLevel('push the change', 'hard', [])).toEqual({ level: 'hard', isNew: false })
+  })
+
+  test('a short message that stands on its own is not a reply, however few words it has (experimental, 0.12.0)', () => {
+    const onItsOwn = ['how are you', 'suggest next fix', 'nice weather today', 'what is a NavMesh?']
+    const stillReplies = ['why?', 'ok thanks', 'and the tests?', 'yes, but why?', 'makes sense', 'why is that?', 'go on', 'yes, go ahead']
+
+    for (const text of onItsOwn) expect(isReply(text, [])).toBe(false)
+    for (const text of stillReplies) expect(isReply(text, [])).toBe(true)
+    // Graded fresh, as the plain short question it is, no longer absorbed by whatever task was running before it.
+    expect(nextLevel('how are you', 'hard', [])).toEqual({ level: 'easy', isNew: true })
+    // A short order still continues a running mid or hard task, same as before this fix.
+    expect(nextLevel('yes, go ahead', 'hard', [])).toEqual({ level: 'hard', isNew: false })
+    expect(nextLevel('push the change', 'hard', [])).toEqual({ level: 'hard', isNew: false })
+  })
+})
+
+describe('suggest mode', () => {
+  const HARD = 'implement the export command for the settings'
+  const WORK = 'fix the failing parser test in the loader please'
+  const HAIKU_OWN = { model: 'claude-haiku-5-5', effort: 'low' } as const
+  const ROUTES = { easy: 'claude-haiku-5-5:low', mid: 'claude-sonnet-5-5:medium', hard: 'claude-opus-5-5:max', limit: 'none', grading: 'one', grader: 'claude-sonnet-5-5' }
+
+  /** The prompt is typed and its turn runs its first request on the session's own model and effort, its answer still coming. */
+  async function startedOn($: Engine, world: World, turnId: string, text: string, own: { model: string; effort?: TurnStepInput['effort'] }): Promise<void> {
+    await typed($, text)
+    await $.turn.start({ text, turnId })
+    await step($, { turnId, index: 0, messageCount: 1, ...own })
+    await world.clock.advance(1)
+  }
+
+  /** The band while the answer runs. */
+  const working = ($: Engine, surface: RenderSurface) => $.ui.mount({ ...BAND, surface, props: { ...BAND.props, isWorking: true } })
+
+  test('the default: a turn runs as the session set it, with no wait for the grade, which is asked off the turn', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [HARD]: 'hang' } })
+
+    await typed($, HARD)
+    await $.turn.start({ text: HARD, turnId: 't1' })
+    await step($, { turnId: 't1', index: 0, messageCount: 1, ...SONNET_HIGH })
+    expect(world.steps).toEqual([SONNET_HIGH]) // sent as the engine made it, the grade still out
+    expect(world.graded.length).toBe(1)
+    const band = await working($, 'terminal')
+    expect(await band.find({ key: 'switch' })).toBeUndefined()
+
+    // A grade that never comes: the rules' stands, as under Automatic.
+    await world.clock.advance(60_000)
+    await band.redraw()
+    expect(await band.find({ key: 'switch' })).toBeDefined()
+    await band.unmount()
+  })
+
+  test('a stronger grade is offered as one button, while the answer runs, and nothing else changes', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [HARD]: 'hard' } })
+    await startedOn($, world, 't1', HARD, SONNET_HIGH)
+
+    const terminal = await working($, 'terminal')
+    expect((await terminal.find({ key: 'task' }))?.text).toBe('Hard task · Sonnet 5.5 at high effort')
+    expect((await terminal.find({ key: 'switch' }))?.props).toMatchObject({ label: 'Switch to Opus 5.5 at max effort', plain: true, hotkey: '0' })
+    expect(await terminal.find({ key: 'redo' })).toBeUndefined()
+    await terminal.unmount()
+
+    for (const surface of ['desktop', 'vscode'] as const) {
+      const band = await working($, surface)
+      const task = await band.find({ key: 'task' })
+      expect(plainOf(task?.text ?? '')).toBe('Hard task · Sonnet 5.5 at high effort · Switch to Opus 5.5 at max effort')
+      expect(task?.props.pressableLinks).toEqual([REDO_HREF])
+      await band.unmount()
+    }
+    expect(world.steps).toEqual([SONNET_HIGH])
+    expect(world.aborted).toEqual([])
+  })
+
+  test('pressing it stops the running answer and asks the prompt again on the stronger model; the task stays there', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [HARD]: 'hard' } })
+    await startedOn($, world, 't1', HARD, SONNET_HIGH)
+
+    const band = await working($, 'terminal')
+    await band.press({ key: 'switch' })
+    expect(world.aborted).toEqual(['t1'])
+    expect(world.submitted).toEqual([HARD, HARD])
+    expect(world.commands).toEqual([]) // the task switches, the session stays on its model
+    await band.redraw()
+    expect(await band.find({ key: 'switch' })).toBeUndefined() // once, however often it is pressed
+
+    await $.turn.complete({ answer: '', durationMs: 5, isAborted: true, turnId: 't1', reason: 'aborted' })
+    await runTurn($, 't2', HARD, SONNET_HIGH)
+    await typed($, 'and the tests?')
+    await runTurn($, 't3', 'and the tests?', SONNET_HIGH)
+    expect(world.steps).toEqual([SONNET_HIGH, OPUS_MAX, OPUS_MAX])
+    expect(world.graded.length).toBe(1) // the switched task and its follow-up are not graded again
+
+    // The task now runs as Automatic runs one: what it ran on, and the way back.
+    await band.unmount()
+    const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await after.find({ key: 'task' }))?.text).toBe('Hard task · Opus 5.5 at max effort')
+    expect((await after.find({ key: 'redo' }))?.props.label).toBe('Ask again on Sonnet 5.5')
+    await after.unmount()
+  })
+
+  test('after the answer has ended there is nothing to stop: pressing it just asks again', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [HARD]: 'hard' } })
+
+    await typed($, HARD)
+    await runTurn($, 't1', HARD, SONNET_HIGH)
+    await world.clock.advance(1)
+
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await band.press({ key: 'switch' })
+    expect(world.aborted).toEqual([])
+    expect(world.submitted).toEqual([HARD, HARD])
+    await band.unmount()
+  })
+
+  test('a switch ignores the limit on long conversations, and the limit does not hold back a suggestion', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { limit: '200000' }, contextTokens: 450_000, grades: { [WORK]: 'mid' } })
+    await startedOn($, world, 't1', WORK, HAIKU_OWN)
+
+    const band = await working($, 'terminal')
+    expect((await band.find({ key: 'switch' }))?.props.label).toBe('Switch to Sonnet 5.5 at medium effort')
+    await band.press({ key: 'switch' })
+    await $.turn.complete({ answer: '', durationMs: 5, isAborted: true, turnId: 't1', reason: 'aborted' })
+    await runTurn($, 't2', WORK, HAIKU_OWN)
+    expect(world.steps).toEqual([HAIKU_OWN, SONNET_MEDIUM])
+    await band.unmount()
+  })
+
+  test('it stays quiet when the grade names what already runs', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [HARD]: 'hard', [WORK]: 'mid' } })
+
+    // A hard task on Opus at max effort: graded, and its pick is what runs, so nothing is offered.
+    await startedOn($, world, 't1', HARD, OPUS_MAX)
+    expect(world.graded.length).toBe(1)
+    let band = await working($, 'terminal')
+    expect(await band.find({ key: 'task' })).toBeUndefined()
+    expect(await band.find({ key: 'switch' })).toBeUndefined()
+    await band.unmount()
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+
+    // A mid task on Sonnet at medium effort, the same.
+    await startedOn($, world, 't2', WORK, SONNET_MEDIUM)
+    expect(world.graded.length).toBe(2)
+    band = await working($, 'terminal')
+    expect(await band.find({ key: 'switch' })).toBeUndefined()
+    await band.unmount()
+  })
+
+  test('where no grade could name anything but the session runs on, no grade is asked', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { easy: 'own', mid: 'own', hard: 'own' }, grades: { [HARD]: 'hard' } })
+    await startedOn($, world, 't1', HARD, SONNET_HIGH)
+    expect(world.graded).toEqual([])
+    const band = await working($, 'terminal')
+    expect(await band.find({ key: 'switch' })).toBeUndefined()
+    await band.unmount()
+  })
+
+  test('an easy task on a strong model is offered the cheaper one, and while the answer runs a press asks again there', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [QUESTION]: 'easy' } })
+    await startedOn($, world, 't1', QUESTION, OPUS_MAX)
+
+    const band = await working($, 'terminal')
+    expect((await band.find({ key: 'task' }))?.text).toBe('Easy task · Opus 5.5 at max effort')
+    expect((await band.find({ key: 'switch' }))?.props).toMatchObject({ label: 'Switch to Haiku 5.5 at low effort', plain: true, hotkey: '0' })
+    await band.press({ key: 'switch' })
+    expect(world.aborted).toEqual(['t1'])
+    expect(world.submitted).toEqual([QUESTION, QUESTION])
+    await band.unmount()
+
+    await $.turn.complete({ answer: '', durationMs: 5, isAborted: true, turnId: 't1', reason: 'aborted' })
+    await runTurn($, 't2', QUESTION, OPUS_MAX)
+    await typed($, 'and the tests?')
+    await runTurn($, 't3', 'and the tests?', OPUS_MAX)
+    expect(world.steps).toEqual([OPUS_MAX, HAIKU_LOW, HAIKU_LOW])
+    expect(world.graded.length).toBe(1)
+  })
+
+  test('once the answer is in, a cheaper pick reads "Continue on": nothing is asked again, and the follow-ups go there', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [QUESTION]: 'easy', [WORK]: 'mid' } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    await world.clock.advance(1)
+
+    for (const surface of ['desktop', 'vscode'] as const) {
+      const band = await $.ui.mount({ ...BAND, surface })
+      expect(plainOf((await band.find({ key: 'task' }))?.text ?? '')).toBe('Easy task · Opus 5.5 at max effort · Continue on Haiku 5.5 at low effort')
+      await band.unmount()
+    }
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'switch' }))?.props.label).toBe('Continue on Haiku 5.5 at low effort')
+    await band.press({ key: 'switch' })
+    expect(world.aborted).toEqual([])
+    expect(world.submitted).toEqual([QUESTION]) // nothing is asked again
+    await band.redraw()
+    expect((await band.find({ key: 'task' }))?.text).toBe('Easy task · follow-ups on Haiku 5.5 at low effort')
+    expect(await band.find({ key: 'switch' })).toBeUndefined()
+    expect(await band.find({ key: 'redo' })).toBeUndefined()
+    await band.unmount()
+
+    // The follow-ups go to Haiku with no new grading; the band then speaks as under Automatic, with the way back.
+    await typed($, 'and the tests?')
+    await runTurn($, 't2', 'and the tests?', OPUS_MAX)
+    expect(world.steps).toEqual([OPUS_MAX, HAIKU_LOW])
+    expect(world.graded.length).toBe(1)
+    const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await after.find({ key: 'task' }))?.text).toBe('Easy task · Haiku 5.5 at low effort')
+    expect((await after.find({ key: 'redo' }))?.props.label).toBe('Ask again on Opus 5.5')
+    await after.unmount()
+
+    // A new task is graded afresh, on the session's own model.
+    await typed($, WORK)
+    await runTurn($, 't3', WORK, OPUS_MAX)
+    expect(world.steps).toEqual([OPUS_MAX, HAIKU_LOW, OPUS_MAX])
+    expect(world.graded.length).toBe(2)
+  })
+
+  test('"Continue on" a model whose mode is Automatic moves the session there too', async ($, on) => {
+    const world = engine(on, ['terminal'], {
+      showsSuggestions: false,
+      sessionModel: 'claude-opus-5-5',
+      stored: { fitByModel: { haiku: 'auto' } },
+      grades: { [QUESTION]: 'easy' },
+    })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_MAX)
+    await world.clock.advance(1)
+
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'switch' }))?.props.label).toBe('Continue on Haiku 5.5 with Automatic on')
+    await band.press({ key: 'switch' })
+    expect(world.commands).toEqual(['/model claude-haiku-5-5'])
+    expect(world.submitted).toEqual([QUESTION])
+    await band.unmount()
+  })
+
+  test('a reply asks nothing, and a new task is graded afresh', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [QUESTION]: 'easy', [WORK]: 'mid' } })
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    await typed($, 'and the tests?')
+    await runTurn($, 't2', 'and the tests?', SONNET_HIGH)
+    expect(world.graded.length).toBe(1)
+    await typed($, WORK)
+    await runTurn($, 't3', WORK, SONNET_HIGH)
+    expect(world.graded.length).toBe(2)
+    expect(world.steps).toEqual([SONNET_HIGH, SONNET_HIGH, SONNET_HIGH])
+  })
+
+  test('a grade that comes after the person has moved on is dropped', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [HARD]: 'hang' } })
+
+    await typed($, HARD)
+    await $.turn.start({ text: HARD, turnId: 't1' })
+    await step($, { turnId: 't1', index: 0, messageCount: 1, ...SONNET_HIGH })
+    await typed($, 'what is next?')
+    await world.clock.advance(60_000)
+
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'switch' })).toBeUndefined()
+    await band.unmount()
+  })
+
+  test('where no surface could show the button, no grade is asked', async ($, on) => {
+    const none = engine(on, NOTHING_DRAWS)
+    await typed($, HARD)
+    await runTurn($, 't1', HARD, SONNET_HIGH)
+    expect(none.graded).toEqual([])
+  })
+
+  test('a prompt with an image gets no suggestion: asking it again would lose the image', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [HARD]: 'hard' } })
+
+    await typed($, `${HARD} [Image: source: /shots/a.png]`)
+    await $.turn.start({ text: HARD, turnId: 't1' })
+    await step($, { turnId: 't1', index: 0, messageCount: 1, ...SONNET_HIGH })
+    await world.clock.advance(1)
+
+    expect(world.graded).toEqual([])
+    const band = await working($, 'terminal')
+    expect(await band.find({ key: 'switch' })).toBeUndefined()
+    await band.unmount()
+  })
+
+  test("the grader and the grading settings apply to the grade asked off the turn", async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { grader: 'claude-haiku-5-5', grading: 'two' }, grades: { [HARD]: 'hard' } })
+    await startedOn($, world, 't1', HARD, SONNET_HIGH)
+
+    expect(world.graded.map(call => call.model)).toEqual(['claude-haiku-5-5', 'claude-haiku-5-5'])
+    const band = await working($, 'terminal')
+    expect(await band.find({ key: 'switch' })).toBeDefined()
+    await band.unmount()
+  })
+
+  test('Automatic still switches on its own, with nothing to press', async ($, on) => {
+    const auto = engine(on, ['terminal'], { showsSuggestions: false, stored: { fit: 'auto' }, grades: { [HARD]: 'hard' } })
+    await typed($, HARD)
+    await runTurn($, 't1', HARD, SONNET_HIGH)
+    expect(auto.steps).toEqual([OPUS_MAX])
+    expect(auto.aborted).toEqual([])
+  })
+
+  test('the setting is migrated from the old switch: on is Automatic, off stays off, and a store without one is Suggest', () => {
+    expect(settingsFrom({}).fit).toBe('suggest')
+    expect(settingsFrom({ route: true }).fit).toBe('auto')
+    expect(settingsFrom({ route: false }).fit).toBe('off')
+    expect(settingsFrom({ fit: 'suggest', route: true }).fit).toBe('suggest')
+    expect(settingsFrom({ fit: 'off' }).fit).toBe('off')
+    expect(settingsFrom({ fit: 'nonsense' }).fit).toBe('suggest')
+    // A session still on the version before keeps reading the switch.
+    expect(storedOf(settingsFrom({ fit: 'auto' }))).toMatchObject({ fit: 'auto', route: true })
+    expect(storedOf(settingsFrom({ fit: 'suggest' }))).toMatchObject({ fit: 'suggest', route: false })
+    expect(storedOf(settingsFrom({ fit: 'off' }))).toMatchObject({ fit: 'off', route: false })
+  })
+
+  test('a stronger pick is a higher model, or the same model at a higher effort that both name', () => {
+    expect(isStronger(OPUS_MAX, SONNET_HIGH)).toBe(true)
+    expect(isStronger(SONNET_HIGH, OPUS_MAX)).toBe(false)
+    expect(isStronger(OPUS_MAX, { model: 'claude-opus-5-5', effort: 'high' })).toBe(true)
+    expect(isStronger(OPUS_MAX, OPUS_MAX)).toBe(false)
+    expect(isStronger(OPUS_MAX, { model: 'claude-opus-5-5', effort: undefined })).toBe(false) // an unnamed effort cannot be compared
+    expect(isStronger(OPUS_MAX, { model: 'claude-opus-5-5[1m]', effort: 'high' })).toBe(true) // the context mark is no model of its own
+    expect(isStronger(OPUS_MAX, { model: 'a-providers-own-model', effort: 'high' })).toBe(false)
+    expect(isStronger({ model: 'claude-fable-5-1', effort: 'high' }, OPUS_MAX)).toBe(true)
+  })
+
+  test('a pick elsewhere is another model, or the same model at another effort that both name', () => {
+    expect(isElsewhere(HAIKU_LOW, OPUS_MAX)).toBe(true)
+    expect(isElsewhere(OPUS_MAX, SONNET_HIGH)).toBe(true)
+    expect(isElsewhere(OPUS_MAX, OPUS_MAX)).toBe(false)
+    expect(isElsewhere({ model: 'claude-opus-5-5', effort: 'high' }, OPUS_MAX)).toBe(true)
+    expect(isElsewhere(OPUS_MAX, { model: 'claude-opus-5-5[1m]', effort: 'max' })).toBe(false) // the context mark is no model of its own
+    expect(isElsewhere(OPUS_MAX, { model: 'claude-opus-5-5', effort: undefined })).toBe(false) // an unnamed effort cannot be compared
+    expect(isElsewhere(HAIKU_LOW, { model: 'a-providers-own-model', effort: 'high' })).toBe(false)
+  })
+
+  test('there is nothing to ask when no grade could name anything but what the session runs on', () => {
+    expect(canSuggest(ROUTES, OPUS_MAX)).toBe(true) // easy and mid name cheaper models
+    expect(canSuggest(ROUTES, SONNET_HIGH)).toBe(true)
+    expect(canSuggest(ROUTES, HAIKU_OWN)).toBe(true)
+    expect(canSuggest({ ...ROUTES, easy: 'own', mid: 'own', hard: 'own' }, SONNET_HIGH)).toBe(false) // "my model and effort" names nothing else
+    expect(canSuggest({ ...ROUTES, easy: 'own', mid: 'own' }, OPUS_MAX)).toBe(false) // hard names what runs
+    expect(canSuggest({ ...ROUTES, easy: 'own', mid: 'own' }, { model: 'claude-opus-5-5', effort: 'high' })).toBe(true) // the same model at max
+    expect(canSuggest({ ...ROUTES, easy: 'own', mid: 'own' }, { model: 'claude-opus-5-5', effort: undefined })).toBe(false)
+    expect(canSuggest(ROUTES, { model: 'a-providers-own-model', effort: 'high' })).toBe(false)
+  })
+
+  test('the menu and the pane offer Suggest, Automatic and Off', async ($, on) => {
+    engine(on, ['terminal'])
+
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    expect((await menu.find({ key: 'setting-fit' }))?.text).toBe(`${'Fit to each task'.padEnd(24)}Suggest`)
+    await menu.press({ key: 'setting-fit' })
+    expect((await menu.find({ key: 'option-suggest' }))?.text).toBe('Suggest: you press to switch  ✓')
+    expect((await menu.find({ key: 'option-auto' }))?.props).toMatchObject({ plain: true, hotkey: '2' })
+    expect((await menu.find({ key: 'option-off' }))?.props.hotkey).toBe('3')
+    await menu.press({ key: 'option-auto' })
+    expect((await menu.find({ key: 'setting-fit' }))?.text).toBe(`${'Fit to each task'.padEnd(24)}Automatic`)
+    await menu.unmount()
+
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    expect((await pane.find({ key: 'fit' }))?.props.value).toBe('auto')
+    await pane.select({ key: 'fit', value: 'off' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'fit' }))?.props.value).toBe('off')
+    await pane.unmount()
+  })
+
+  test('the settings in words say which mode and what it is set to', async ($, on) => {
+    engine(on, NOTHING_DRAWS, { stored: { fit: 'suggest' } })
+    const run = () => $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+
+    expect((await run()).text).toContain('Fit to the task: suggest (easy tasks: Haiku 5.5 at low effort; mid tasks: Sonnet 5.5 at medium effort; hard tasks: Opus 5.5 at max effort)')
+  })
+
+  test('each family keeps its own mode, read from any spelling of a model; the others keep the mode for every model', () => {
+    const stored = settingsFrom({ fit: 'suggest', fitByModel: { opus: 'auto', sonnet: 'nonsense', gpt: 'auto' } })
+    expect(stored.fitByModel).toEqual({ opus: 'auto' }) // a mode or a family it does not know is left out
+    expect(settingsFrom({ fit: 'off' }).fitByModel).toEqual({}) // a store from before has none
+    expect(storedOf(stored)).toMatchObject({ fit: 'suggest', fitByModel: { opus: 'auto' }, route: false })
+
+    expect(fitFor(stored, 'claude-opus-5-5')).toBe('auto')
+    expect(fitFor(stored, 'claude-opus-5-5[1m]')).toBe('auto')
+    expect(fitFor(stored, 'opus')).toBe('auto')
+    expect(fitFor(stored, 'claude-sonnet-5-5')).toBe('suggest')
+    expect(fitFor(stored, null)).toBe('suggest')
+    expect(fitFor(stored, 'a-providers-own-model')).toBe('suggest')
+
+    expect(familyOf('Opus 5.5')).toBe('opus')
+    expect(familyOf('claude-haiku-5-5')).toBe('haiku')
+    expect(familyOf('fable[1m]')).toBe('fable')
+    expect(familyOf('opusculum')).toBeNull()
+  })
+
+  test('a pick is kept for the family the session runs on, and the setting shows it again whenever the session is back there', async ($, on) => {
+    const world = engine(on, ['terminal'], { sessionModel: 'claude-opus-5-5' })
+    const ROW = 'Fit to each task'.padEnd(24)
+    const open = () => $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+    const fitRowOf = async () => {
+      const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+      const row = (await menu.find({ key: 'setting-fit' }))?.text
+      await menu.unmount()
+      return row
+    }
+
+    await open()
+    let menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    expect((await menu.find({ key: 'setting-fit' }))?.text).toBe(`${ROW}Suggest`)
+    await menu.press({ key: 'setting-fit' })
+    expect((await menu.find({ key: 'about' }))?.text).toContain('Each model keeps the mode you pick while on it.')
+    await menu.press({ key: 'option-auto' })
+    expect((await menu.find({ key: 'setting-fit' }))?.text).toBe(`${ROW}Automatic`)
+    await menu.unmount()
+
+    // On Sonnet nothing was picked: the mode for every model stands, and a pick there is Sonnet's alone.
+    world.sessionModel = 'claude-sonnet-5-5'
+    await open()
+    expect(await fitRowOf()).toBe(`${ROW}Suggest`)
+    menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    await menu.press({ key: 'setting-fit' })
+    await menu.press({ key: 'option-off' })
+    await menu.unmount()
+
+    world.sessionModel = 'claude-opus-5-5'
+    await open()
+    expect(await fitRowOf()).toBe(`${ROW}Automatic`)
+    world.sessionModel = 'claude-haiku-5-5'
+    await open()
+    expect(await fitRowOf()).toBe(`${ROW}Suggest`)
+
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
+    expect((await pane.find({ key: 'fit' }))?.props).toMatchObject({ label: 'Fit model and effort to each task', value: 'suggest' })
+    await pane.unmount()
+  })
+
+  test('each turn runs under the mode of the model the session is on', async ($, on) => {
+    const OTHER = 'what does the parser return?'
+    const world = engine(on, ['terminal'], {
+      showsSuggestions: false,
+      sessionModel: 'claude-opus-5-5',
+      stored: { fit: 'suggest', fitByModel: { opus: 'auto' } },
+      grades: { [QUESTION]: 'easy', [OTHER]: 'easy' },
+    })
+    const OPUS_HIGH = { model: 'claude-opus-5-5', effort: 'high' } as const
+
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, OPUS_HIGH)
+    expect(world.steps).toEqual([HAIKU_LOW]) // Automatic on Opus sends an easy question to Haiku
+
+    world.sessionModel = 'claude-sonnet-5-5' // the person ran /model sonnet
+    await typed($, OTHER)
+    await runTurn($, 't2', OTHER, SONNET_HIGH)
+    expect(world.steps).toEqual([HAIKU_LOW, SONNET_HIGH]) // Suggest on Sonnet changes nothing
+  })
+
+  test('a switch to a model whose mode is Automatic says so, and a press moves the session there as /model does', async ($, on) => {
+    const world = engine(on, ['terminal'], {
+      showsSuggestions: false,
+      sessionModel: 'claude-sonnet-5-5',
+      stored: { fitByModel: { opus: 'auto' } },
+      grades: { [HARD]: 'hard', [QUESTION]: 'easy' },
+    })
+    const OPUS_HIGH = { model: 'claude-opus-5-5', effort: 'high' } as const
+    await startedOn($, world, 't1', HARD, SONNET_HIGH)
+
+    for (const surface of ['desktop', 'vscode'] as const) {
+      const shown = await working($, surface)
+      expect(plainOf((await shown.find({ key: 'task' }))?.text ?? '')).toBe('Hard task · Sonnet 5.5 at high effort · Switch to Opus 5.5 with Automatic on')
+      await shown.unmount()
+    }
+    const band = await working($, 'terminal')
+    expect((await band.find({ key: 'switch' }))?.props).toMatchObject({ label: 'Switch to Opus 5.5 with Automatic on', hotkey: '0' })
+    await band.press({ key: 'switch' })
+    expect(world.aborted).toEqual(['t1'])
+    expect(world.commands).toEqual(['/model claude-opus-5-5'])
+    expect(world.submitted).toEqual([HARD, HARD])
+    await band.unmount()
+
+    // The session is on Opus now, whose Automatic fits each task: the hard one at max effort, an easy one on Haiku.
+    await $.turn.complete({ answer: '', durationMs: 5, isAborted: true, turnId: 't1', reason: 'aborted' })
+    await runTurn($, 't2', HARD, OPUS_HIGH)
+    await typed($, QUESTION)
+    await runTurn($, 't3', QUESTION, OPUS_HIGH)
+    expect(world.steps).toEqual([SONNET_HIGH, OPUS_MAX, HAIKU_LOW])
+  })
+
+  test('where /model cannot run, the press still switches the task', async ($, on) => {
+    const world = engine(on, ['terminal'], {
+      showsSuggestions: false,
+      sessionModel: 'claude-sonnet-5-5',
+      stored: { fitByModel: { opus: 'auto' } },
+      grades: { [HARD]: 'hard' },
+      commandsFail: true,
+    })
+    await startedOn($, world, 't1', HARD, SONNET_HIGH)
+
+    const band = await working($, 'terminal')
+    await band.press({ key: 'switch' })
+    expect(world.submitted).toEqual([HARD, HARD])
+    await band.unmount()
+    await $.turn.complete({ answer: '', durationMs: 5, isAborted: true, turnId: 't1', reason: 'aborted' })
+    await runTurn($, 't2', HARD, SONNET_HIGH)
+    expect(world.steps).toEqual([SONNET_HIGH, OPUS_MAX])
+  })
+
+  test('the settings in words give the mode kept for the session model', async ($, on) => {
+    engine(on, NOTHING_DRAWS, { sessionModel: 'claude-opus-5-5', stored: { fit: 'suggest', fitByModel: { opus: 'auto' } } })
+    const run = () => $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
+
+    expect((await run()).text).toContain('Fit to the task: automatic (')
+  })
+})
+
+describe('a prompt sent while the answer runs', () => {
+  test('is the next message already: no choices are asked for that answer, and the next answer gets its own', async ($, on) => {
+    const world = engine(on, ['terminal'], { stored: { fit: 'off' } })
+
+    await typed($, 'first question')
+    await $.turn.start({ text: 'first question', turnId: 't1' })
+    await world.clock.advance(10)
+    await typed($, 'second question')
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    expect(world.requests).toEqual([])
+
+    await runTurn($, 't2', 'second question', SONNET_HIGH)
+    await world.clock.advance(1)
+    expect(world.requests.length).toBe(1)
+    expect(world.requests[0]?.prompt).toContain('second question')
+  })
+
+  test('where nothing draws, the line beneath the answer carries no choices either', async ($, on) => {
+    const world = engine(on, NOTHING_DRAWS, { stored: { fit: 'off' } })
+
+    await typed($, 'first question')
+    await $.turn.start({ text: 'first question', turnId: 't1' })
+    await world.clock.advance(10)
+    await typed($, 'second question')
+    const done = await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    expect(done.text).toBe(REPLY)
+    expect(world.requests).toEqual([])
   })
 })
