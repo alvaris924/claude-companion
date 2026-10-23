@@ -4,238 +4,196 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Companion for Claude Code</title>
-<meta name="description" content="Companion is a mod for Claude Code that adds small, useful features where you work: your last prompt in view, next messages you can click, and the right model for each task. Free and open source.">
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Companion is a mod for Claude Code in the terminal: next messages you pick with one key, your last prompt in view, and the right model for each task. Free and open source.">
 <link rel="canonical" href="https://claudecompanion.vercel.app/">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#0b0c0f" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0c0c0c">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Companion for Claude Code">
 <meta property="og:title" content="Companion for Claude Code">
-<meta property="og:description" content="Companion is a mod for Claude Code that adds small, useful features where you work: your last prompt in view, next messages you can click, and the right model for each task. Free and open source.">
+<meta property="og:description" content="Companion is a mod for Claude Code in the terminal: next messages you pick with one key, your last prompt in view, and the right model for each task. Free and open source.">
 <meta property="og:url" content="https://claudecompanion.vercel.app/">
 <meta name="twitter:card" content="summary">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cascadia+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-/* Layout: a hero, then quiet rows that each pair a claim with its own small demo. Every demo shows the same moment in VS Code and in the terminal, one tab apart. Dark first. */
+/* Layout: the demos carry the page. A hero pairs one line of promise with the main demo, a grid of three more demos
+   follows, then four plain facts and the install. Companion targets the terminal, so the page wears Windows
+   Terminal's default colours and every demo plays in a Windows Terminal window. One dark look, on purpose. */
 :root {
   color-scheme: dark;
-  --bg: #0b0c0f;
-  --surface: #13151a;
-  --panel: #191b21;
-  --raise: #22252d;
-  --hover: #2b2f38;
-  --line: #2b2f39;
-  --fg: #edeef2;
-  --muted: #9299a7;
-  --accent: #86abff;
-  --quote: #4a5060;
-  --term: #0e0f12;
-  --glow: rgba(134, 171, 255, 0.2);
-  --shadow: rgba(0, 0, 0, 0.55);
-  --font-text: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg: #f6f7f9; --surface: #eceef3; --panel: #ffffff; --raise: #f5f6f8; --hover: #e7eaf0; --line: #d8dce4;
-    --fg: #15171c; --muted: #5a6170; --accent: #2457d6; --quote: #c2c8d3; --term: #ffffff;
-    --glow: rgba(36, 87, 214, 0.10); --shadow: rgba(20, 30, 60, 0.18);
-    color-scheme: light;
-  }
-}
-:root[data-theme="light"] {
-  --bg: #f6f7f9; --surface: #eceef3; --panel: #ffffff; --raise: #f5f6f8; --hover: #e7eaf0; --line: #d8dce4;
-  --fg: #15171c; --muted: #5a6170; --accent: #2457d6; --quote: #c2c8d3; --term: #ffffff;
-  --glow: rgba(36, 87, 214, 0.10); --shadow: rgba(20, 30, 60, 0.18);
-  color-scheme: light;
+  --bg: #0c0c0c;
+  --surface: #141414;
+  --raise: #1d1d1d;
+  --hover: #2a2a2a;
+  --line: #292929;
+  --fg: #cccccc;
+  --bright: #f2f2f2;
+  --muted: #8f8f8f;
+  --accent: #6d9eff;
+  --green: #16c60c;
+  --yellow: #f9f1a5;
+  --chrome: #202020;
+  --shadow: rgba(0, 0, 0, 0.7);
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono", Menlo, monospace;
+  --font-text: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
 }
 
 [hidden] { display: none !important; }
-body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-text); font-size: 18px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-text); font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
-code { font-family: var(--font-mono); font-size: 0.86em; background: var(--raise); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: 0.9em; color: var(--yellow); }
+::selection { background: var(--fg); color: var(--bg); }
 
 .page { overflow-x: hidden; overflow-x: clip; }
-.wrap { max-width: 1080px; margin-inline: auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1120px; margin-inline: auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 
 /* Top bar */
-.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 22px; }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 17px; color: var(--fg); letter-spacing: -0.01em; }
-.brand .mark { color: var(--accent); font-size: 19px; }
-.nav { display: flex; align-items: center; gap: 22px; font-size: 15px; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 20px; font-family: var(--font-mono); }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; color: var(--bright); }
+.brand .mark { color: var(--accent); }
+.nav { display: flex; align-items: center; gap: 22px; font-size: 13px; }
 .nav a { color: var(--muted); }
-.nav a:hover { color: var(--fg); text-decoration: none; }
-.nav .gh { color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px; background: var(--surface); }
+.nav a:hover { color: var(--bright); text-decoration: none; }
+.nav .gh { color: var(--bright); border: 1px solid var(--line); border-radius: 4px; padding: 4px 12px; }
+.nav .gh:hover { border-color: var(--muted); }
 
-/* Hero */
-.hero { padding-block: 28px 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
-.announce { justify-self: start; display: inline-flex; align-items: center; gap: 10px; max-width: 100%; font-size: 14px; font-weight: 500; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px 4px 4px; }
+/* Hero: the promise on the left, the main demo on the right. */
+.hero { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: clamp(32px, 5vw, 64px); align-items: center; padding-block: 48px 24px; }
+.hero-copy { display: grid; gap: 22px; min-width: 0; }
+.announce { justify-self: start; display: inline-flex; align-items: center; gap: 10px; max-width: 100%; font-family: var(--font-mono); font-size: 12px; color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 3px 10px 3px 3px; }
 .announce:hover { text-decoration: none; border-color: var(--muted); }
-.announce .tag { flex: none; font-size: 12px; font-weight: 600; color: var(--bg); background: var(--accent); border-radius: 999px; padding: 1px 9px; }
-.announce .go { color: var(--muted); }
-h1 { font-size: clamp(34px, 6.4vw, 62px); line-height: 1.04; letter-spacing: -0.045em; font-weight: 600; margin: 0; text-wrap: balance; }
+.announce .tag { flex: none; font-weight: 600; color: var(--bg); background: var(--accent); border-radius: 2px; padding: 0 7px; }
+h1 { font-family: var(--font-mono); font-size: clamp(32px, 4.6vw, 50px); line-height: 1.12; letter-spacing: -0.03em; font-weight: 600; color: var(--bright); margin: 0; text-wrap: balance; }
+h1 .p { color: var(--green); }
 h1 .soft { color: var(--muted); }
-.lede { font-size: clamp(18px, 2.1vw, 21px); color: var(--muted); max-width: 54ch; margin: 0; }
-.cta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.cmd { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 7px 7px 7px 14px; }
-.cmd pre { margin: 0; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; font-family: var(--font-mono); font-size: 14px; color: var(--fg); }
-.cmd .prompt { color: var(--muted); }
-.ask { box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px 14px; width: min(100%, 640px); background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 12px 12px 16px; }
-.ask-label { grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--muted); }
-.ask-text { margin: 0; font-size: 15px; line-height: 1.55; color: var(--fg); overflow-wrap: anywhere; }
-.copy { flex: none; font: inherit; font-size: 13px; font-weight: 500; color: var(--bg); background: var(--fg); border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
-.copy:hover { opacity: 0.9; }
-.ghost { font-size: 16px; font-weight: 500; color: var(--fg); padding: 8px 4px; }
-.meta { font-size: 14px; color: var(--muted); margin: 0; }
+h1 .tcur { width: 0.55em; height: 0.9em; vertical-align: -0.08em; margin-left: 0.12em; background: var(--bright); }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 40ch; }
+.lede b { color: var(--bright); font-weight: 500; }
+.only { justify-self: start; display: inline-flex; align-items: center; gap: 8px; margin: 0; font-family: var(--font-mono); font-size: 12px; color: var(--yellow); border: 1px solid rgba(249, 241, 165, 0.28); border-radius: 4px; padding: 4px 10px; }
+.only::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); }
+.facts-line { margin: 0; font-family: var(--font-mono); font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.facts-line span::before { content: "✓ "; color: var(--green); }
 
-.composer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 11px 14px; background: var(--panel); color: var(--muted); font-size: 15px; }
-.composer .filled { color: var(--fg); }
-.send { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--raise); border: 1px solid var(--line); font-size: 13px; color: var(--muted); }
-
-/* Surface tabs: each demo shows the same moment in VS Code and in the terminal; a pick switches every demo on the page. */
-.surface { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
-.tabs { justify-self: start; position: relative; display: inline-flex; gap: 2px; padding: 3px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; }
-.tab { font: inherit; font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--muted); background: transparent; border: 0; border-radius: 999px; padding: 4px 13px; cursor: pointer; }
-.tab:hover { color: var(--fg); }
-.tab[aria-selected="true"] { color: var(--fg); background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); }
-
-/* The companion's own drawing */
-.band { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px 12px; display: grid; gap: 8px; font-size: 15px; }
-.band-label { font-size: 12px; color: var(--muted); }
-.row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.quote { flex: 1; min-width: 0; border-left: 3px solid var(--quote); padding-left: 10px; overflow-wrap: anywhere; }
-.more { flex: none; width: 30px; height: 24px; display: grid; place-items: center; background: var(--raise); border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 14px; }
-.eyebrow { font-size: 12px; font-weight: 600; color: var(--muted); }
-.choices { display: grid; gap: 6px; justify-items: start; }
-.choice { background: var(--raise); border: 1px solid var(--line); border-radius: 5px; padding: 3px 10px; font-size: 14px; color: var(--fg); max-width: 100%; overflow-wrap: anywhere; }
-.routed { font-size: 13px; color: var(--muted); }
-.routed .link { color: var(--accent); }
+/* Install box: the request you paste into Claude Code. */
+.ask { box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px 14px; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 12px 12px 14px; }
+.ask-label { grid-column: 1 / -1; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.ask-text { margin: 0; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--bright); overflow-wrap: anywhere; }
+.ask-text::before { content: "> "; color: var(--accent); }
+.copy { flex: none; font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--bg); background: var(--fg); border: 0; border-radius: 3px; padding: 6px 12px; cursor: pointer; }
+.copy:hover { background: var(--bright); }
 
 /* Sections */
-section.block { padding-block: 96px 0; }
-section.block#features { padding-block: 36px 0; }
-section.block#features .kicker { margin-bottom: 14px; }
-.kicker { font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 10px; }
-h2 { font-size: clamp(28px, 3.6vw, 38px); line-height: 1.08; letter-spacing: -0.035em; font-weight: 600; margin: 0 0 12px; max-width: 20ch; text-wrap: balance; }
-.section-lede { color: var(--muted); max-width: 58ch; margin: 0 0 16px; }
+section.block { padding-block: 88px 0; }
+.head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 24px; margin-bottom: 28px; }
+.kicker { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.kicker::before { content: "# "; color: var(--green); }
+h2 { font-family: var(--font-mono); font-size: clamp(22px, 2.8vw, 30px); line-height: 1.2; letter-spacing: -0.02em; font-weight: 600; color: var(--bright); margin: 0; text-wrap: balance; }
+.head p { margin: 0; color: var(--muted); }
 
-.feature { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: clamp(28px, 5vw, 64px); align-items: center; padding-block: 40px; border-top: 1px solid var(--line); }
-.feature:nth-of-type(even) { grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); }
-.feature:nth-of-type(even) .copytext { order: 2; }
-.feature h3 { font-size: 26px; line-height: 1.2; letter-spacing: -0.025em; font-weight: 600; margin: 0 0 12px; text-wrap: balance; }
-.feature p { margin: 0; color: var(--muted); }
-.feature p + p { margin-top: 12px; }
-.copytext { min-width: 0; }
+/* The demo grid: every cell is a caption over a window, the wide one spans both columns. */
+.demos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px 32px; }
+.cell { display: grid; grid-template-rows: auto 1fr; gap: 14px; min-width: 0; }
+.cell.wide { grid-column: 1 / -1; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.6fr); grid-template-rows: none; align-items: center; gap: 32px; }
+.cap h3 { font-family: var(--font-mono); font-size: 16px; font-weight: 600; color: var(--bright); margin: 0 0 4px; }
+.cap p { margin: 0; color: var(--muted); font-size: 15px; }
 
-.demo { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; overflow: hidden; min-width: 0; }
-.group-h { font-size: 12px; font-weight: 600; color: var(--muted); }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-.card .r { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 8px 12px; font-size: 14px; }
-.card .r + .r { border-top: 1px solid var(--line); }
-.card .v { color: var(--muted); text-align: right; min-width: 0; }
-.card .v::after { content: " ▾"; font-size: 11px; }
-.foot { font-size: 12px; color: var(--muted); }
-.stack { display: grid; gap: 6px; }
+/* A Windows Terminal window: tab strip with caption buttons, then the console in the default scheme. */
+.demo { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; align-content: start; }
+.win { min-width: 0; background: var(--bg); border: 1px solid #383838; border-radius: 8px; overflow: hidden; box-shadow: 0 24px 60px var(--shadow); font-family: var(--font-ui); }
+.titlebar { display: flex; align-items: flex-end; height: 38px; background: var(--chrome); user-select: none; }
+.wtab { display: flex; align-items: center; gap: 8px; align-self: stretch; margin: 7px 0 0 8px; padding: 0 10px 0 12px; min-width: 0; width: 190px; max-width: 42%; background: var(--bg); border-radius: 6px 6px 0 0; font-size: 12px; color: var(--bright); }
+.wtab .ico { flex: none; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 3px; background: #012456; color: #ffffff; font-family: var(--font-mono); font-size: 9px; font-weight: 600; line-height: 1; }
+.wtab .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wtab .x { flex: none; color: var(--muted); font-size: 11px; }
+.tbtn { flex: none; align-self: center; width: 30px; height: 26px; margin-top: 7px; display: grid; place-items: center; color: var(--fg); font-size: 15px; }
+.tbtn.chev { font-size: 10px; }
+.drag { flex: 1; }
+.caps { display: flex; align-self: stretch; }
+.caps span { width: 46px; display: grid; place-items: center; color: var(--fg); }
+.caps svg { width: 10px; height: 10px; stroke: currentColor; stroke-width: 1; fill: none; }
+.console { position: relative; background: var(--bg); padding: 10px 18px 14px 12px; font-family: var(--font-mono); font-size: 13px; line-height: 1.45; color: var(--fg); }
+.console::after { content: ""; position: absolute; top: 6px; right: 3px; width: 3px; height: 38%; border-radius: 2px; background: #3a3a3a; }
 
 /* The terminal's own drawing: one monospace grid, the quote bar, numbered choices, a dim hint under them. */
-.term { background: var(--term); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; overflow: hidden; }
 .term .dim { color: var(--muted); }
 .term .acc { color: var(--accent); }
 .term .line { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 .term .flow { white-space: normal; }
-.term .taken { color: var(--fg); }
-.term b { font-weight: 600; }
-.term .bar { display: flex; gap: 8px; border-left: 2px solid var(--quote); padding-left: 8px; }
-.term .quote { flex: 1; min-width: 0; border-left: 0; padding-left: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term .taken { color: var(--bright); }
+.term b { font-weight: 600; color: var(--bright); }
+.term .bar { display: flex; gap: 8px; border-left: 2px solid var(--muted); padding-left: 8px; }
+.term .quote { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bright); }
 .term .ch { display: inline-block; max-width: 100%; margin-right: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: top; }
 .term .k { color: var(--accent); }
-.term .rule { border-top: 1px solid var(--line); margin-block: 6px; }
-.term .gap { height: 0.8em; }
-.term .ring { background: var(--fg); color: var(--term); }
+.term .said { color: var(--fg); }
+.term .rule { overflow: hidden; white-space: nowrap; color: #444444; }
+.term .rule::before { content: "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"; }
+.term .gap { height: 1.45em; }
+.term .ring { background: var(--fg); color: var(--bg); }
 .term .ring .acc, .term .ring .k { color: inherit; }
-.term .is-pick { color: var(--accent); }
-.press-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.tcur { display: inline-block; width: 0.6em; height: 1.15em; vertical-align: -0.2em; background: var(--fg); animation: blink 1.06s steps(1) infinite; }
+.press-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 
-.soon { border-top: 1px solid var(--line); padding-top: 28px; display: grid; gap: 6px; }
-.soon h3 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
-.soon p { margin: 0; color: var(--muted); max-width: 62ch; }
+/* Facts: four plain figures in one row. */
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.fact { padding: 22px 20px; display: grid; gap: 6px; align-content: start; }
+.fact + .fact { border-left: 1px solid var(--line); }
+.fact .n { font-family: var(--font-mono); font-size: 26px; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; color: var(--bright); font-variant-numeric: tabular-nums; }
+.fact p { margin: 0; color: var(--muted); font-size: 14px; }
 
-/* Where it works */
-.surfaces { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 48px; margin: 0; }
-.surfaces div { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 16px; padding-block: 16px; border-top: 1px solid var(--line); }
-.surfaces dt { font-weight: 600; }
-.surfaces dd { margin: 0; color: var(--muted); }
+/* Install: two ways side by side. */
+.install { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+.way { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.way h3 { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--bright); margin: 0; }
+.way p { margin: 0; color: var(--muted); font-size: 14px; }
+.shell { box-sizing: border-box; font-family: var(--font-mono); font-size: 13px; color: var(--bright); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.shell .ps { color: var(--muted); }
 
-/* What it sends */
-.ledger { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.ledger article { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px; display: grid; gap: 8px; align-content: start; }
-.ledger .figure { font-size: 30px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.ledger .figure small { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
-.ledger h3 { font-size: 17px; font-weight: 600; margin: 0; }
-.ledger p { margin: 0; color: var(--muted); font-size: 16px; }
-
-/* Install */
-.install { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; max-width: 760px; }
-.install .cmd pre { font-size: 15px; }
-.alt { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 8px; }
-.alt article { border-top: 1px solid var(--line); padding-top: 14px; display: grid; gap: 8px; align-content: start; }
-.alt h3 { font-size: 16px; font-weight: 600; margin: 0; }
-.alt p { margin: 0; color: var(--muted); font-size: 16px; }
-.small-cmd { font-family: var(--font-mono); font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
-
-footer { margin-top: 110px; border-top: 1px solid var(--line); padding-block: 26px 48px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px; font-size: 14px; color: var(--muted); }
+footer { margin-top: 104px; border-top: 1px solid var(--line); padding-block: 24px 44px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
 footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
 footer a { color: var(--muted); }
-footer a:hover { color: var(--fg); }
+footer a:hover { color: var(--bright); }
 
 /* Motion: each demo plays its interaction while in view and rests on the finished state. */
-.cursor { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; opacity: 0; transition: transform .75s cubic-bezier(.22,.8,.24,1), opacity .25s ease; }
-.cursor.on { opacity: 1; }
-.cursor svg { display: block; overflow: visible; }
-.cursor path { fill: var(--fg); stroke: var(--bg); stroke-width: 1.2px; stroke-linejoin: round; }
-.choice, .card .r, .keycap { transition: background-color .18s ease, border-color .18s ease, transform .12s ease, color .18s ease; }
-.choice.is-hover { background: var(--hover); border-color: var(--muted); }
-.card .r.is-hover { background: var(--hover); }
 .is-press { transform: scale(.97); }
-.link.is-hover { text-decoration: underline; }
 .fade { transition: opacity .17s ease; }
 .fade.out { opacity: 0; }
-.routed { transition: opacity .25s ease; }
-.routed.out { opacity: 0; }
-.caret { display: inline-block; width: 1.5px; height: 1.05em; margin-left: 1px; vertical-align: -0.18em; background: var(--accent); animation: blink 1s steps(1) infinite; }
+.caret { display: inline-block; width: 0.6em; height: 1.15em; vertical-align: -0.2em; background: var(--fg); }
 @keyframes blink { 50% { opacity: 0; } }
-.keycap { display: inline-block; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 6px; vertical-align: 1px; }
-.keycap.is-press { color: var(--fg); background: var(--hover); transform: translateY(1px); }
+.keycap { display: inline-block; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 6px; transition: background-color .18s ease, transform .12s ease, color .18s ease; }
+.keycap.is-press { color: var(--bright); background: var(--hover); transform: translateY(1px); }
 
-@media (max-width: 820px) {
-  .feature, .feature:nth-of-type(even) { grid-template-columns: minmax(0, 1fr); }
-  .feature:nth-of-type(even) .copytext { order: 0; }
-  .surfaces, .ledger, .alt { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 900px) {
+  .hero, .demos, .install { grid-template-columns: minmax(0, 1fr); }
+  .cell.wide { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fact:nth-child(3) { border-left: 0; }
+  .fact:nth-child(n+3) { border-top: 1px solid var(--line); }
   .nav .opt { display: none; }
 }
 @media (max-width: 520px) {
-  body { font-size: 16px; }
-  .demo { padding: 12px; }
-  .card .r { flex-direction: column; gap: 0; }
-  .card .v { text-align: left; }
-  .surfaces div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-  section.block { padding-block: 72px 0; }
-  .term { font-size: 12px; }
+  .hero { padding-block: 28px 8px; }
+  section.block { padding-block: 64px 0; }
+  .console { font-size: 11.5px; }
+  .caps span { width: 34px; }
+  .wtab { width: 140px; }
+  .fact { padding: 18px 14px; }
 }
-@media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .tcur { animation: none; } }
 </style>
 </head>
 <body>
 <div class="page">
 <div class="wrap">
   <header class="top">
-    <span class="brand"><span class="mark" aria-hidden="true">↳</span>Companion</span>
+    <span class="brand"><span class="mark" aria-hidden="true">↳</span>companion</span>
     <nav class="nav" aria-label="Page">
       <a class="opt" href="#features">Features</a>
       <a class="opt" href="#privacy">Privacy</a>
@@ -246,261 +204,171 @@ footer a:hover { color: var(--fg); }
   </header>
 
   <section class="hero" aria-labelledby="headline">
-    <a class="announce" href="#route"><span class="tag">New</span><span>The right model, one press away</span><span class="go" aria-hidden="true">›</span></a>
-    <h1 id="headline">Your companion<br><span class="soft">for Claude Code.</span></h1>
-    <p class="lede">Companion is a mod for Claude Code. It adds small, useful features right where you work, and it is built to keep taking more. It starts with next messages you can click, your last prompt in view, and the right model for each task.</p>
-    <div class="cta">
+    <div class="hero-copy">
+      <a class="announce" href="#route"><span class="tag">New</span><span>The right model, one key away</span></a>
+      <h1 id="headline"><span class="p" aria-hidden="true">&gt;</span> Your companion <span class="soft">for Claude Code</span><span class="tcur" aria-hidden="true"></span></h1>
+      <p class="lede">Your next message <b>one key away</b>, your last prompt <b>always in view</b>, and the <b>right model</b> for every task.</p>
+      <p class="only">Terminal only, unless a feature says otherwise</p>
       <div class="ask">
         <span class="ask-label">Paste into Claude Code to install</span>
         <p class="ask-text" id="cmd-hero" data-text="Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.">Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.</p>
         <button class="copy" type="button" data-copy="cmd-hero">Copy</button>
       </div>
-      <a class="ghost" href="https://github.com/alvaris924/claude-companion">View the source →</a>
+      <p class="facts-line"><span>Open source, MIT</span><span>No network requests</span><span>Claude Code 2.1.300+</span></p>
     </div>
-    <p class="meta">Free and open source · MIT license · Claude Code 2.1.300 or newer</p>
-
+    <div class="demo" data-demo="term" role="img" aria-label="Windows Terminal: three numbered suggestions under the last prompt; Tab takes the likeliest into the prompt box and Enter sends it">
+      <div class="win">
+        <div class="titlebar" aria-hidden="true"><span class="wtab"><span class="ico">&gt;_</span><span class="name">PowerShell</span><span class="x">✕</span></span><span class="tbtn">+</span><span class="tbtn chev">⌄</span><span class="drag"></span><span class="caps"><span><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></span></span></div>
+        <div class="console term">
+          <div class="line said">Merged. The parser tests pass on all three runners.</div>
+          <div class="gap"></div>
+          <div class="line bar"><span class="quote" data-last>merge the parser work</span><span class="dim">⋯</span></div>
+          <div class="line flow" data-next><span class="ch"><span class="k">1:</span> Open the PR</span><span class="ch"><span class="k">2:</span> Show the diff</span><span class="ch"><span class="k">3:</span> Run the tests</span></div>
+          <div class="line dim">type 1–3 to send · /companion for settings</div>
+          <div class="rule"></div>
+          <div class="line" data-prompt><span class="acc">&gt;</span> <span class="tcur"></span><span class="dim" data-sugg>Open the PR</span></div>
+          <div class="rule"></div>
+        </div>
+      </div>
+      <div class="press-row" aria-hidden="true">key <span class="keycap" data-key>Tab</span></div>
+    </div>
   </section>
 
-  <section class="block" id="features" aria-label="Features">
-    <p class="kicker">Features so far · each demo shows VS Code and the terminal, a tab apart</p>
-
-    <div class="feature">
-      <div class="copytext">
-        <h3>Suggestions you can click</h3>
-        <p>After each answer, a model reads your prompt and the end of the reply, then offers what you’ll likely send next. You get three by default, or anywhere from one to five.</p>
-        <p>Click one to send it, or have a click put it in the box so you can edit first. In the terminal, every choice takes its own number from the empty prompt box, Tab takes the likeliest, and <code>/copy-next 2</code> copies the second.</p>
+  <section class="block" id="features" aria-labelledby="features-h">
+    <div class="head">
+      <div>
+        <p class="kicker">Features</p>
+        <h2 id="features-h">Watch it work</h2>
       </div>
-      <div class="surface" data-tabs>
-        <div class="tabs" role="tablist" aria-label="Show it in">
-          <button class="tab" type="button" role="tab" id="pick-t-vscode" aria-controls="pick-p-vscode" aria-selected="true" data-surface="vscode">VS Code</button>
-          <button class="tab" type="button" role="tab" id="pick-t-terminal" aria-controls="pick-p-terminal" aria-selected="false" tabindex="-1" data-surface="terminal">Terminal</button>
-        </div>
-        <div id="pick-p-vscode" role="tabpanel" aria-labelledby="pick-t-vscode">
-          <div class="demo" data-demo="pickBox" role="img" aria-label="VS Code: a click puts a suggested message in the prompt box, where it can be edited before sending">
-            <div class="band">
-              <div class="band-label">Companion</div>
-              <div class="row"><div class="eyebrow" style="flex:1">Suggested</div><div class="more">⋯</div></div>
-              <div class="choices">
-                <div class="choice">↳ Open the pull request into dev</div>
-                <div class="choice">↳ Show me the diff first</div>
-                <div class="choice">↳ Run the tests on Windows too</div>
-              </div>
-            </div>
-            <div class="composer"><span data-box>Type your next message</span><span class="send" aria-hidden="true">↑</span></div>
-          </div>
-        </div>
-        <div id="pick-p-terminal" role="tabpanel" aria-labelledby="pick-t-terminal" hidden>
-          <div class="demo" data-demo="term" role="img" aria-label="The terminal: three numbered suggestions, and the likeliest waiting dim in the prompt box, which Tab takes">
-            <div class="term">
-              <div class="line bar"><span class="quote" data-last>merge the parser work</span><span class="dim">⋯</span></div>
-              <div class="line flow" data-next><span class="ch"><span class="k">1:</span> Open the PR</span><span class="ch"><span class="k">2:</span> Show the diff</span><span class="ch"><span class="k">3:</span> Run the tests</span></div>
-              <div class="line dim">type 1–3 to send · /companion for settings</div>
-              <div class="rule"></div>
-              <div class="line"><span class="acc">&gt;</span> <span class="dim" data-sugg>Open the PR</span>  <span class="keycap" data-key>Tab</span></div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <p>Every demo is the real terminal drawing.</p>
     </div>
 
-    <div class="feature">
-      <div class="copytext">
-        <h3>Your question stays in view</h3>
-        <p>A long answer can push your question off the screen. In the terminal the band keeps it in sight while you read, without the blocks a host wraps around your words.</p>
-        <p>VS Code already pins your prompt above its answer, so there the band leaves it out. Turn on <code>Last prompt</code> in <code>/companion</code> to show it in both places. A pasted image shows as <code>[image]</code>, and <code>/last-prompt</code> brings the prompt and the choices back.</p>
-      </div>
-      <div class="demo" data-demo="last" role="img" aria-label="The band in the terminal showing the last prompt behind a quote bar">
-        <div class="term">
-          <div class="line bar"><span class="quote">fix the empty header for new accounts [image]</span><span class="dim">⋯</span></div>
-          <div class="rule"></div>
-          <div class="line"><span class="acc">&gt;</span></div>
+    <div class="demos">
+      <div class="cell wide" id="route">
+        <div class="cap">
+          <h3>The right model for each task</h3>
+          <p>Each new task is graded easy, mid or hard. Press 0 to switch, or let Automatic switch for you.</p>
         </div>
-      </div>
-    </div>
-
-    <div class="feature" id="route">
-      <div class="copytext">
-        <h3>The right model for each task</h3>
-        <p>Sonnet 5.5 grades each new task easy, mid or hard. By default it only suggests. Your task runs on your own model, and when another one would fit, up for hard work or down for an easy question, a button appears while the answer is still being written. Once the answer is in, a cheaper pick sends what follows there instead.</p>
-        <p>Turn on Automatic and it switches on its own: easy on Haiku 5.5, mid on Sonnet 5.5, hard on Opus 5.5 at max, each yours to change. Replies stay with their task, so a quick “why?” after hard work stays on the hard model. Each model keeps its own setting, so Automatic can run on Opus while Suggest stays on Sonnet.</p>
-      </div>
-      <div class="surface" data-tabs>
-        <div class="tabs" role="tablist" aria-label="Show it in">
-          <button class="tab" type="button" role="tab" id="route-t-vscode" aria-controls="route-p-vscode" aria-selected="true" data-surface="vscode">VS Code</button>
-          <button class="tab" type="button" role="tab" id="route-t-terminal" aria-controls="route-p-terminal" aria-selected="false" tabindex="-1" data-surface="terminal">Terminal</button>
-        </div>
-        <div id="route-p-vscode" role="tabpanel" aria-labelledby="route-t-vscode">
-          <div class="demo" data-demo="route" role="img" aria-label="VS Code, on Sonnet 5.5: an easy question offers Haiku 5.5, a click switches it; a hard task then offers Opus 5.5">
-            <div class="band">
-              <div class="band-label">Companion</div>
-              <div class="row"><div class="routed" style="flex:1">Easy task · Sonnet 5.5 at high effort · <span class="link">Switch to Haiku 5.5 at low effort</span></div><div class="more">⋯</div></div>
-              <div class="eyebrow">Suggested</div>
-              <div class="choices">
-                <div class="choice">↳ Where is the loader called from?</div>
-                <div class="choice">↳ Add a test for the loader</div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div id="route-p-terminal" role="tabpanel" aria-labelledby="route-t-terminal" hidden>
-          <div class="demo" data-demo="routeTerm" role="img" aria-label="The terminal, on Sonnet 5.5: an easy question offers Haiku 5.5 on the 0 key; a hard task then offers Opus 5.5">
-            <div class="term">
+        <div class="demo" data-demo="routeTerm" role="img" aria-label="Windows Terminal, on Sonnet 5.5: an easy question offers Haiku 5.5 on the 0 key; a hard task then offers Opus 5.5">
+          <div class="win">
+            <div class="titlebar" aria-hidden="true"><span class="wtab"><span class="ico">&gt;_</span><span class="name">PowerShell</span><span class="x">✕</span></span><span class="tbtn">+</span><span class="tbtn chev">⌄</span><span class="drag"></span><span class="caps"><span><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></span></span></div>
+            <div class="console term">
               <div class="line bar"><span class="quote">what does the config loader do?</span><span class="dim">⋯</span></div>
               <div class="line flow" data-fit><span class="dim">Easy task · Sonnet 5.5 at high effort</span>  <span class="ch"><span class="k">0:</span> Switch to Haiku 5.5 at low effort</span></div>
               <div class="line flow" data-list><span class="ch"><span class="k">1:</span> Where is the loader called from?</span><span class="ch"><span class="k">2:</span> Add a test for the loader</span></div>
               <div class="line dim">type 1–2 to send · /companion for settings</div>
               <div class="rule"></div>
-              <div class="line"><span class="acc">&gt;</span> <span class="keycap" data-key>0</span></div>
+              <div class="line"><span class="acc">&gt;</span> <span class="tcur"></span></div>
+              <div class="rule"></div>
             </div>
           </div>
+          <div class="press-row" aria-hidden="true">key <span class="keycap" data-key>0</span></div>
         </div>
       </div>
-    </div>
 
-    <div class="feature">
-      <div class="copytext">
-        <h3>Tune it in one place</h3>
-        <p>Run <code>/companion</code>, or click ⋯ in the band. Pick the model that writes suggestions, how many you get, what a click does, and how each task’s model is fitted.</p>
-        <p>In the terminal it opens as a menu you work from the keys: ↑↓ to move, Enter to change, Esc to close. Every pick is saved for all your sessions, and open ones use it from their next turn.</p>
-      </div>
-      <div class="surface" data-tabs>
-        <div class="tabs" role="tablist" aria-label="Show it in">
-          <button class="tab" type="button" role="tab" id="set-t-vscode" aria-controls="set-p-vscode" aria-selected="true" data-surface="vscode">VS Code</button>
-          <button class="tab" type="button" role="tab" id="set-t-terminal" aria-controls="set-p-terminal" aria-selected="false" tabindex="-1" data-surface="terminal">Terminal</button>
+      <div class="cell">
+        <div class="cap">
+          <h3>Your question stays in view</h3>
+          <p>A long answer never scrolls your prompt out of sight.</p>
         </div>
-        <div id="set-p-vscode" role="tabpanel" aria-labelledby="set-t-vscode">
-          <div class="demo" data-demo="settings" role="img" aria-label="The settings pane in VS Code: two groups of pickers with a note under each">
-            <div class="stack">
-              <div class="group-h">Suggested next messages</div>
-              <div class="card">
-                <div class="r"><span>Model</span><span class="v">Sonnet 5.5</span></div>
-                <div class="r"><span>Thinking effort</span><span class="v">Low</span></div>
-                <div class="r"><span>Number of choices</span><span class="v">3</span></div>
-                <div class="r"><span>Clicking a choice</span><span class="v">Sends it as my message</span></div>
-              </div>
-            </div>
-            <div class="stack">
-              <div class="group-h">Model and effort for each task</div>
-              <div class="card">
-                <div class="r"><span>Fit model and effort to each task</span><span class="v">Suggest</span></div>
-                <div class="r"><span>Easy tasks</span><span class="v">Haiku 5.5 at low effort</span></div>
-                <div class="r" data-pick><span>Mid tasks</span><span class="v">Sonnet 5.5 at medium effort</span></div>
-                <div class="r"><span>Hard tasks</span><span class="v">Opus 5.5 at max effort</span></div>
-                <div class="r"><span>Grader</span><span class="v">Sonnet 5.5</span></div>
-              </div>
-              <div class="foot">A model grades each new task, as part of your plan’s usage. Suggest offers a button when another model would fit; Automatic switches on its own. Each model keeps the mode you pick while the session runs on it.</div>
-            </div>
-            <div class="stack">
-              <div class="group-h">Last prompt</div>
-              <div class="card">
-                <div class="r"><span>Show it in the band in VS Code</span><span class="v">Off</span></div>
-              </div>
-              <div class="foot">VS Code already pins your prompt above its answer, so the band there leaves it out unless this is on. The terminal always shows it.</div>
+        <div class="demo" data-demo="last" role="img" aria-label="Windows Terminal: the band shows the last prompt behind a quote bar above the prompt box">
+          <div class="win">
+            <div class="titlebar" aria-hidden="true"><span class="wtab"><span class="ico">&gt;_</span><span class="name">PowerShell</span><span class="x">✕</span></span><span class="tbtn">+</span><span class="tbtn chev">⌄</span><span class="drag"></span><span class="caps"><span><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></span></span></div>
+            <div class="console term">
+              <div class="line said dim">  …and the header now falls back to the account name.</div>
+              <div class="line said dim">  Two tests cover the empty case.</div>
+              <div class="gap"></div>
+              <div class="line bar"><span class="quote">fix the empty header for new accounts [image]</span><span class="dim">⋯</span></div>
+              <div class="rule"></div>
+              <div class="line"><span class="acc">&gt;</span> <span class="tcur"></span></div>
+              <div class="rule"></div>
             </div>
           </div>
         </div>
-        <div id="set-p-terminal" role="tabpanel" aria-labelledby="set-t-terminal" hidden>
-          <div class="demo" data-demo="menu" role="img" aria-label="The settings menu in the terminal: the arrow keys move to Fit to each task, Enter lists its options, and 2 picks Automatic">
-            <div class="term">
+      </div>
+
+      <div class="cell">
+        <div class="cap">
+          <h3>Settings from the keys</h3>
+          <p><code>/companion</code> opens a menu: ↑↓ to move, Enter to change.</p>
+        </div>
+        <div class="demo" data-demo="menu" role="img" aria-label="Windows Terminal, the settings menu: the arrow keys move to Fit to each task, Enter lists its options, and 2 picks Automatic">
+          <div class="win">
+            <div class="titlebar" aria-hidden="true"><span class="wtab"><span class="ico">&gt;_</span><span class="name">PowerShell</span><span class="x">✕</span></span><span class="tbtn">+</span><span class="tbtn chev">⌄</span><span class="drag"></span><span class="caps"><span><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></span></span></div>
+            <div class="console term">
               <div data-list-view>
-                <div class="line"><b>Companion settings</b><span class="dim"> · ↑↓ to move · Enter to change · Esc to close</span></div>
-                <div class="line flow dim" data-about>The model that writes them, as part of your plan’s usage.</div>
-                <div class="line"><b>Suggested next messages</b></div>
-                <div class="line ring" data-row="model">  Model                   <span class="acc">Sonnet 5.5</span></div>
-                <div class="line" data-row="choices">  Number of choices       <span class="acc">3</span></div>
-                <div class="line"><b>Model and effort for each task</b></div>
-                <div class="line" data-row="fit">  Fit to each task        <span class="acc" data-val>Suggest</span></div>
-                <div class="line" data-row="hard">  Hard tasks              <span class="acc">Opus 5.5 at max effort</span></div>
+                <div class="line"><b>Companion settings</b><span class="dim"> · Esc to close</span></div>
+                <div class="line dim" data-about>The model that writes suggestions.</div>
+                <div class="gap"></div>
+                <div class="line ring" data-row="model">  Model              <span class="acc">Sonnet 5.5</span></div>
+                <div class="line" data-row="choices">  Number of choices  <span class="acc">3</span></div>
+                <div class="line" data-row="fit">  Fit to each task   <span class="acc" data-val>Suggest</span></div>
+                <div class="line" data-row="hard">  Hard tasks         <span class="acc">Opus 5.5 at max</span></div>
               </div>
               <div data-options hidden>
-                <div class="line"><b>Fit to each task</b><span class="dim"> · ↑↓ to move · Enter or its number to pick · Esc to close</span></div>
-                <div class="line flow dim">A model grades each new task. Suggest changes nothing and offers a button when another model would fit; Automatic switches on its own. Each model keeps the mode you pick while on it.</div>
-                <div class="line ring" data-opt>  <span class="k">1:</span> Suggest: you press to switch  ✓</div>
-                <div class="line" data-opt>  <span class="k">2:</span> Automatic: switches on its own</div>
+                <div class="line"><b>Fit to each task</b><span class="dim"> · Esc to close</span></div>
+                <div class="line dim">Grade each new task and fit the model.</div>
+                <div class="gap"></div>
+                <div class="line ring" data-opt>  <span class="k">1:</span> Suggest  ✓</div>
+                <div class="line" data-opt>  <span class="k">2:</span> Automatic</div>
                 <div class="line" data-opt>  <span class="k">3:</span> Off</div>
               </div>
             </div>
-            <div class="press-row" aria-hidden="true">key <span class="keycap" data-key>↓</span></div>
           </div>
+          <div class="press-row" aria-hidden="true">key <span class="keycap" data-key>↓</span></div>
         </div>
       </div>
     </div>
-
-    <div class="soon">
-      <h3>More on the way</h3>
-      <p>Companion grows one feature at a time, and each release lists what it adds. Follow along on <a href="/whats-new">What’s new</a>, or see what is planned in the <a href="https://github.com/alvaris924/claude-companion/milestones">project milestones</a> and suggest something in the <a href="https://github.com/alvaris924/claude-companion/issues/new/choose">issue tracker</a>.</p>
-    </div>
-  </section>
-
-  <section class="block" aria-labelledby="where-h">
-    <p class="kicker">Where it works</p>
-    <h2 id="where-h">Wherever you run Claude&nbsp;Code</h2>
-    <p class="section-lede">Companion has been tried in the terminal and in the VS Code extension, so those are the two it claims.</p>
-    <dl class="surfaces">
-      <div><dt>Terminal</dt><dd>The band, cut to your window, numbered choices you pick by typing their number, and the settings as a menu you work from the keys.</dd></div>
-      <div><dt>VS Code</dt><dd>The band above the prompt box, each suggestion a quiet button and each switch a link.</dd></div>
-    </dl>
   </section>
 
   <section class="block" id="privacy" aria-labelledby="privacy-h">
-    <p class="kicker">Cost and privacy</p>
-    <h2 id="privacy-h">What it sends, and what it costs</h2>
-    <p class="section-lede">Companion runs inside Claude Code and uses your own account. Here is exactly what leaves your session.</p>
-    <div class="ledger">
-      <article>
-        <div class="figure">1 call <small>per answer</small></div>
-        <h3>One model call, on your account</h3>
-        <p>Each round of suggestions is one request through Claude Code, counted toward your plan or API bill like any other. If the chosen model gives no answer, Haiku 5.5 is asked once instead. Fitting the model to each task adds one short grading call when a new task starts.</p>
-      </article>
-      <article>
-        <div class="figure">1,500 + 6,000 <small>characters</small></div>
-        <h3>Only what it needs</h3>
-        <p>The model sees your last prompt, up to 1,500 characters, and the end of the answer, up to 6,000. Nothing else from your session is sent.</p>
-      </article>
-      <article>
-        <div class="figure">0 <small>requests of its own</small></div>
-        <h3>No network requests</h3>
-        <p>Companion calls nothing itself. Settings stay in Claude Code’s plugin store, and your last prompt and the suggestions live only in the session’s state.</p>
-      </article>
-      <article>
-        <div class="figure">Sonnet 5.5 <small>by default</small></div>
-        <h3>You pick the model</h3>
-        <p>Haiku 5.5 is the cheapest and fastest. Fable 5.1 writes the best suggestions and costs the most, about 100 times Haiku’s price per token. Or turn suggestions off and keep the band.</p>
-      </article>
+    <div class="head">
+      <div>
+        <p class="kicker">Cost and privacy</p>
+        <h2 id="privacy-h">Small, and in the open</h2>
+      </div>
+      <p>It runs inside Claude Code, on your own account.</p>
+    </div>
+    <div class="facts">
+      <div class="fact"><div class="n">1 call</div><p>per answer, on your plan. Sonnet 5.5 by default.</p></div>
+      <div class="fact"><div class="n">7,500</div><p>characters at most: your prompt and the answer’s end.</p></div>
+      <div class="fact"><div class="n">0</div><p>network requests of its own. Settings stay local.</p></div>
+      <div class="fact"><div class="n">MIT</div><p>open source. <a href="https://github.com/alvaris924/claude-companion">Read every line.</a></p></div>
     </div>
   </section>
 
   <section class="block" id="install" aria-labelledby="install-h">
-    <p class="kicker">Install</p>
-    <h2 id="install-h">Ask Claude to install it</h2>
-    <div class="install">
-      <p class="section-lede" style="margin:0">Paste this into Claude Code, in the terminal or VS Code. Claude clones the repository, reads the code and tells you what it found, then installs the plugin from that clone. Start a new session to load it.</p>
-      <div class="ask">
-        <span class="ask-label">Paste into Claude Code</span>
-        <p class="ask-text" id="cmd-install" data-text="Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.">Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.</p>
-        <button class="copy" type="button" data-copy="cmd-install">Copy</button>
+    <div class="head">
+      <div>
+        <p class="kicker">Install</p>
+        <h2 id="install-h">Let Claude check it, then install it</h2>
       </div>
-      <div class="alt">
-        <article>
-          <h3>Updating</h3>
-          <p>Keep the clone, since Companion is read from it. Run <code>git pull</code> there, and your next session uses the new code.</p>
-        </article>
-        <article>
-          <h3>Or install it yourself</h3>
-          <div class="small-cmd">claude plugin install companion --marketplace alvaris924/claude-companion</div>
-          <p>From a shell. In a terminal session, <code>/plugin install</code> takes the same arguments.</p>
-        </article>
+      <p>Start a new session to load it.</p>
+    </div>
+    <div class="install">
+      <div class="way">
+        <h3>Ask Claude Code</h3>
+        <div class="ask">
+          <span class="ask-label">Paste into Claude Code</span>
+          <p class="ask-text" id="cmd-install" data-text="Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.">Clone https://github.com/alvaris924/claude-companion into my home folder, check the code for anything unsafe, then install the companion plugin from it.</p>
+          <button class="copy" type="button" data-copy="cmd-install">Copy</button>
+        </div>
+        <p>To update, run <code>git pull</code> in the clone.</p>
+      </div>
+      <div class="way">
+        <h3>Or from a shell</h3>
+        <div class="shell"><span class="ps">PS&gt; </span>claude plugin install companion --marketplace alvaris924/claude-companion</div>
       </div>
     </div>
   </section>
 
   <footer>
-    <span>Companion · MIT license · An independent, open-source mod for Claude Code</span>
+    <span>companion · MIT · an independent, open-source mod for Claude Code</span>
     <nav aria-label="More">
       <a href="https://github.com/alvaris924/claude-companion">Source</a>
       <a href="/whats-new">What’s new</a>
       <a href="https://github.com/alvaris924/claude-companion/blob/main/CHANGELOG.md">Changelog</a>
-      <a href="https://github.com/alvaris924/claude-companion/blob/main/docs/index.md">Documentation</a>
+      <a href="https://github.com/alvaris924/claude-companion/blob/main/docs/index.md">Docs</a>
     </nav>
   </footer>
 </div>
@@ -532,47 +400,9 @@ footer a:hover { color: var(--fg); }
   });
 })();
 
-// Surface tabs: a pick in any one switches every demo on the page to that surface, and this browser remembers it.
-(function () {
-  var KEY = 'companion-surface';
-  var groups = Array.prototype.slice.call(document.querySelectorAll('[data-tabs]'));
-  function show(surface) {
-    groups.forEach(function (group) {
-      Array.prototype.forEach.call(group.querySelectorAll('[role="tab"]'), function (tab) {
-        var on = tab.getAttribute('data-surface') === surface;
-        tab.setAttribute('aria-selected', on ? 'true' : 'false');
-        tab.tabIndex = on ? 0 : -1;
-        var panel = document.getElementById(tab.getAttribute('aria-controls'));
-        if (panel) panel.hidden = !on;
-      });
-    });
-  }
-  function pick(surface) {
-    show(surface);
-    try { localStorage.setItem(KEY, surface); } catch (e) {}
-  }
-  var saved = null;
-  try { saved = localStorage.getItem(KEY); } catch (e) {}
-  if (saved === 'vscode' || saved === 'terminal') show(saved);
-  groups.forEach(function (group) {
-    var tabs = Array.prototype.slice.call(group.querySelectorAll('[role="tab"]'));
-    tabs.forEach(function (tab, i) {
-      tab.addEventListener('click', function () { pick(tab.getAttribute('data-surface')); });
-      tab.addEventListener('keydown', function (e) {
-        var to = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : null;
-        if (to === null) return;
-        e.preventDefault();
-        var next = tabs[(to + tabs.length) % tabs.length];
-        pick(next.getAttribute('data-surface'));
-        next.focus();
-      });
-    });
-  });
-})();
-
 // The demos play their interaction on a loop while in view. Every scene ends where it began: the finished state the
 // page shows at rest, so a thumbnail, a reduced-motion viewer and a paused demo all see the whole picture. A demo that
-// leaves view, or whose tab is closed, stops at its next pause and goes back to that resting frame.
+// leaves view stops at its next pause and goes back to that resting frame.
 (function () {
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduce || !('IntersectionObserver' in window)) return;
@@ -582,6 +412,7 @@ footer a:hover { color: var(--fg); }
   async function swap(el, text) { el.classList.add('fade', 'out'); await wait(170); el.textContent = text; el.classList.remove('out'); await wait(170); }
   async function swapHTML(el, html) { el.classList.add('fade', 'out'); await wait(170); el.innerHTML = html; el.classList.remove('out'); await wait(170); }
   async function press(el) { el.classList.add('is-press'); await wait(140); el.classList.remove('is-press'); }
+  // Types into a terminal line: a block cursor rides at the end of the text.
   async function type(el, text, ms) {
     var typed = document.createTextNode('');
     var caret = document.createElement('span');
@@ -593,51 +424,22 @@ footer a:hover { color: var(--fg); }
     await wait(350);
     caret.remove();
   }
-  async function append(el, text, ms) {
-    var typed = document.createTextNode('');
-    var caret = document.createElement('span');
-    caret.className = 'caret';
-    el.appendChild(typed);
-    el.appendChild(caret);
-    for (var i = 1; i <= text.length; i++) { typed.data = text.slice(0, i); await wait(ms); }
-    await wait(350);
-    caret.remove();
-  }
   function choicesHTML(texts) {
     return texts.map(function (text, i) { return '<span class="ch"><span class="k">' + (i + 1) + ':</span> ' + text + '</span>'; }).join('');
   }
 
   function play(demo, scene) {
-    var visible = false, wake = null, cursor = null, rest = demo.innerHTML;
+    var visible = false, wake = null, rest = demo.innerHTML;
     new IntersectionObserver(function (entries) {
       visible = entries[0].isIntersecting;
       if (visible && wake) { var w = wake; wake = null; w(); }
     }, { threshold: 0.4 }).observe(demo);
     function untilVisible() { return visible ? Promise.resolve() : new Promise(function (r) { wake = r; }); }
     function pause(ms) { return wait(ms).then(function () { if (!visible) throw STOP; }); }
-    function corner() { var d = demo.getBoundingClientRect(); return 'translate(' + (d.width - 28) + 'px,' + (d.height - 28) + 'px)'; }
-    function ensureCursor() {
-      if (cursor) return cursor;
-      cursor = document.createElement('div');
-      cursor.className = 'cursor';
-      cursor.setAttribute('aria-hidden', 'true');
-      cursor.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M2.5 1.5l10.5 7.2-4.4.9 2.6 5-2 1-2.6-5-3.1 3.1z"/></svg>';
-      demo.appendChild(cursor);
-      cursor.style.transform = corner();
-      return cursor;
-    }
     var c = {
       $: function (s) { return demo.querySelector(s); },
       $$: function (s) { return Array.prototype.slice.call(demo.querySelectorAll(s)); },
-      wait: pause,
-      point: function (el, fx, fy) {
-        var k = ensureCursor(), d = demo.getBoundingClientRect(), r = el.getBoundingClientRect();
-        var x = r.left - d.left + r.width * (fx == null ? 0.3 : fx), y = r.top - d.top + r.height * (fy == null ? 0.6 : fy);
-        k.classList.add('on');
-        k.style.transform = 'translate(' + x + 'px,' + y + 'px)';
-        return pause(800);
-      },
-      park: function () { var k = ensureCursor(); k.style.transform = corner(); k.classList.remove('on'); }
+      wait: pause
     };
     (async function () {
       for (;;) {
@@ -647,7 +449,6 @@ footer a:hover { color: var(--fg); }
         try { await scene(c); } catch (e) {
           if (e !== STOP) return;
           demo.innerHTML = rest;
-          cursor = null;
         }
       }
     })();
@@ -659,31 +460,14 @@ footer a:hover { color: var(--fg); }
       var prompts = [quote.textContent, 'why does the build fail on Windows?', 'rename the config loader please'];
       for (var i = 1; i <= prompts.length; i++) { await c.wait(2300); await swap(quote, prompts[i % prompts.length]); }
     },
-    pickBox: async function (c) {
-      // A click with "puts it in the box" picked: the choice waits in the prompt box to be edited.
-      var choices = c.$$('.choice'), box = c.$('[data-box]');
-      var rest = box.textContent;
-      await c.point(choices[2]);
-      choices[2].classList.add('is-hover');
-      await c.wait(450);
-      await press(choices[2]);
-      choices[2].classList.remove('is-hover');
-      c.park();
-      box.classList.add('filled');
-      await swap(box, 'Run the tests on Windows too');
-      await c.wait(700);
-      await append(box, ', then on macOS', 45);
-      await c.wait(2600);
-      box.classList.remove('filled');
-      await swap(box, rest);
-      await c.wait(2000);
-    },
     term: async function (c) {
-      var last = c.$('[data-last]'), next = c.$('[data-next]'), sugg = c.$('[data-sugg]'), key = c.$('[data-key]');
+      // Tab takes the dim suggestion into the box, Enter sends it, and the band moves on to the next turn.
+      var last = c.$('[data-last]'), next = c.$('[data-next]'), sugg = c.$('[data-sugg]'), key = c.$('[data-key]'), cur = c.$('[data-prompt] .tcur');
       var lastText = last.textContent, nextHTML = next.innerHTML, suggText = sugg.textContent;
       await press(key);
       sugg.classList.remove('dim');
       sugg.classList.add('taken');
+      sugg.after(cur);
       await c.wait(800);
       key.textContent = 'Enter';
       await c.wait(450);
@@ -693,6 +477,7 @@ footer a:hover { color: var(--fg); }
       sugg.textContent = '';
       sugg.classList.remove('taken');
       sugg.classList.add('dim');
+      sugg.before(cur);
       key.textContent = 'Tab';
       await swapHTML(next, choicesHTML(['Review the PR', 'Merge it', 'Check the CI run']));
       await c.wait(600);
@@ -703,32 +488,8 @@ footer a:hover { color: var(--fg); }
       await swap(sugg, suggText);
       await c.wait(2000);
     },
-    route: async function (c) {
-      // On Sonnet 5.5: an easy question offers Haiku and one click switches it; a hard task then offers Opus.
-      var routed = c.$('.routed'), list = c.$('.choices');
-      var restLine = routed.innerHTML;
-      var link = c.$('.routed .link');
-      await c.point(link, 0.5, 0.6);
-      link.classList.add('is-hover');
-      await c.wait(450);
-      c.park();
-      await swapHTML(routed, 'Easy task · Haiku 5.5 at low effort · <span class="link">Ask again on Sonnet 5.5</span>');
-      await c.wait(2600);
-      list.classList.add('fade', 'out');
-      routed.classList.add('out');
-      await c.wait(300);
-      routed.innerHTML = 'Hard task · Sonnet 5.5 at high effort · <span class="link">Switch to Opus 5.5 at max effort</span>';
-      routed.classList.remove('out');
-      await c.wait(3000);
-      routed.classList.add('out');
-      await c.wait(300);
-      routed.innerHTML = restLine;
-      routed.classList.remove('out');
-      list.classList.remove('out');
-      await c.wait(2400);
-    },
     routeTerm: async function (c) {
-      // The same in the terminal, where the switch is the 0 key.
+      // On Sonnet 5.5: an easy question offers Haiku on the 0 key; a hard task then offers Opus.
       var quote = c.$('.quote'), fit = c.$('[data-fit]'), list = c.$('[data-list]'), key = c.$('[data-key]');
       var restPrompt = quote.textContent, restFit = fit.innerHTML;
       await press(key);
@@ -750,30 +511,15 @@ footer a:hover { color: var(--fg); }
       list.classList.remove('out');
       await c.wait(2400);
     },
-    settings: async function (c) {
-      var row = c.$('[data-pick]'), value = row.querySelector('.v');
-      var pick = value.textContent;
-      await c.point(row, 0.78, 0.55);
-      row.classList.add('is-hover');
-      await c.wait(500);
-      await press(row);
-      await swap(value, 'Sonnet 5.5 at high effort');
-      await c.wait(2600);
-      await press(row);
-      await swap(value, pick);
-      row.classList.remove('is-hover');
-      c.park();
-      await c.wait(2800);
-    },
     menu: async function (c) {
       // ↓ ↓ to the mode, Enter lists its options, 2 picks Automatic; the menu then goes back to rest.
       var rows = c.$$('[data-row]'), about = c.$('[data-about]'), listView = c.$('[data-list-view]'), options = c.$('[data-options]');
       var opts = c.$$('[data-opt]'), val = c.$('[data-val]'), key = c.$('[data-key]');
       var abouts = {
-        model: 'The model that writes them, as part of your plan’s usage.',
+        model: 'The model that writes suggestions.',
         choices: 'How many it offers after each answer.',
-        fit: 'A model grades each new task. Suggest changes nothing and offers a button when another model would fit; Automatic switches on its own.',
-        hard: 'What planning, refactors, migrations and bugs with an unclear cause run on, or are suggested to switch to.'
+        fit: 'Grade each new task and fit the model.',
+        hard: 'What hard tasks run on.'
       };
       function ring(i) {
         rows.forEach(function (row, j) { row.classList.toggle('ring', j === i); });
