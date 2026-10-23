@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Companion for Claude Code</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<meta name="description" content="Companion is a mod for Claude Code in the terminal: next messages you pick with one key, your last prompt in view, and the right model for each task. Free and open source.">
+<meta name="description" content="Companion is a mod for Claude Code in the terminal: after each answer, 3 suggested next prompts you send with one key, your last prompt in view, and the right model for each task. Free and open source.">
 <link rel="canonical" href="https://claudecompanion.vercel.app/">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="color-scheme" content="dark">
@@ -13,7 +13,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Companion for Claude Code">
 <meta property="og:title" content="Companion for Claude Code">
-<meta property="og:description" content="Companion is a mod for Claude Code in the terminal: next messages you pick with one key, your last prompt in view, and the right model for each task. Free and open source.">
+<meta property="og:description" content="Companion is a mod for Claude Code in the terminal: after each answer, 3 suggested next prompts you send with one key, your last prompt in view, and the right model for each task. Free and open source.">
 <meta property="og:url" content="https://claudecompanion.vercel.app/">
 <meta name="twitter:card" content="summary">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -207,7 +207,7 @@ footer a:hover { color: var(--bright); }
     <div class="hero-copy">
       <a class="announce" href="#route"><span class="tag">New</span><span>The right model, one key away</span></a>
       <h1 id="headline"><span class="p" aria-hidden="true">&gt;</span> Your companion <span class="soft">for Claude Code</span><span class="tcur" aria-hidden="true"></span></h1>
-      <p class="lede">Your next message <b>one key away</b>, your last prompt <b>always in view</b>, and the <b>right model</b> for every task.</p>
+      <p class="lede">After each answer, pick your next prompt from <b>3 suggestions</b> with one key. Your last prompt stays <b>in view</b>, and each task gets the <b>right model</b>.</p>
       <p class="only">Terminal only, unless a feature says otherwise</p>
       <div class="ask">
         <span class="ask-label">Paste into Claude Code to install</span>
@@ -244,6 +244,29 @@ footer a:hover { color: var(--bright); }
     </div>
 
     <div class="demos">
+      <div class="cell wide" id="choices">
+        <div class="cap">
+          <h3>Your next prompt in 3 choices</h3>
+          <p>After each answer, a model suggests 3 next prompts. Type 1, 2 or 3 to send one.</p>
+        </div>
+        <div class="demo" data-demo="pick" role="img" aria-label="Windows Terminal: three numbered next prompts under the answer; typing 2 sends the second, and the answer to it brings three new ones">
+          <div class="win">
+            <div class="titlebar" aria-hidden="true"><span class="wtab"><span class="ico">&gt;_</span><span class="name">PowerShell</span><span class="x">✕</span></span><span class="tbtn">+</span><span class="tbtn chev">⌄</span><span class="drag"></span><span class="caps"><span><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></span><span><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></span><span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10"/></svg></span></span></div>
+            <div class="console term">
+              <div class="line said" data-said>The upload test now waits for the server instead of a fixed 2 s.</div>
+              <div class="gap"></div>
+              <div class="line bar"><span class="quote" data-last>fix the flaky upload test</span><span class="dim">⋯</span></div>
+              <div class="line flow" data-next><span class="ch"><span class="k">1:</span> Run it 20 times to be sure</span><span class="ch"><span class="k">2:</span> Show me the diff</span><span class="ch"><span class="k">3:</span> Commit the fix</span></div>
+              <div class="line dim">type 1–3 to send · /companion for settings</div>
+              <div class="rule"></div>
+              <div class="line"><span class="acc">&gt;</span> <span class="tcur"></span></div>
+              <div class="rule"></div>
+            </div>
+          </div>
+          <div class="press-row" aria-hidden="true">key <span class="keycap" data-key>2</span></div>
+        </div>
+      </div>
+
       <div class="cell wide" id="route">
         <div class="cap">
           <h3>The right model for each task</h3>
@@ -487,6 +510,29 @@ footer a:hover { color: var(--bright); }
       await swapHTML(next, nextHTML);
       await swap(sugg, suggText);
       await c.wait(2000);
+    },
+    pick: async function (c) {
+      // 2 sends the second choice as the next prompt; the answer to it brings three new ones.
+      var said = c.$('[data-said]'), last = c.$('[data-last]'), next = c.$('[data-next]'), key = c.$('[data-key]');
+      var restSaid = said.textContent, restLast = last.textContent, restNext = next.innerHTML;
+      await press(key);
+      next.querySelectorAll('.ch')[1].classList.add('ring');
+      await c.wait(600);
+      next.classList.add('fade', 'out');
+      await swap(last, 'Show me the diff');
+      await c.wait(1100);
+      await swap(said, 'Two files changed: upload.test.ts and server.ts.');
+      await swapHTML(next, choicesHTML(['Commit the fix', 'Explain the server change', 'Open the PR']));
+      await c.wait(3200);
+      // Back to the resting frame, faded so it reads as the demo starting over.
+      var term = c.$('.term');
+      term.classList.add('fade', 'out');
+      await c.wait(300);
+      said.textContent = restSaid;
+      last.textContent = restLast;
+      next.innerHTML = restNext;
+      term.classList.remove('out');
+      await c.wait(2400);
     },
     routeTerm: async function (c) {
       // On Sonnet 5.5: an easy question offers Haiku on the 0 key; a hard task then offers Opus.
