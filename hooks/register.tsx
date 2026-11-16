@@ -2,16 +2,38 @@ import { atom, read, update } from 'claude-code'
 import type {
   ElementTable,
   EngineInterface,
+  ModelUsage,
   PromptOrigin,
   Register,
   RenderElement,
+  RenderSurface,
   SelectOption,
+  SessionContextBreakdown,
+  SessionMessage,
+  Timer,
+  ToolUseSummary,
   TurnStepChunk,
   TurnStepInput,
   TurnStepResult,
 } from 'claude-code'
 
-import type { LastPrompt, OwnRequest, RoutedTurn, StoredSettings, Suggestion } from '../types'
+import type {
+  BoundKeys,
+  EndLine,
+  LastPrompt,
+  MeterReading,
+  Note,
+  NotesView,
+  OwnRequest,
+  QueuedAction,
+  RoutedTurn,
+  SetupView,
+  Spend,
+  StoredSettings,
+  Suggestion,
+  XrayPart,
+  XrayView,
+} from '../types'
 
 // The companion: the person's one Claude Code mod, the home of every small helper around the prompt.
 //
@@ -58,6 +80,146 @@ const PANE_TITLE = 'Last & next prompt'
 const SETTINGS_PANE = 'companion-settings'
 const SETTINGS_TITLE = 'Companion settings'
 const SETTINGS_KEY = 'settings' // in $.store
+const NOTES_PANE = 'companion-notes'
+const NOTES_TITLE = 'Notes'
+const NOTES_KEY = 'notes' // in $.store: every project's notes, each carrying the folder it was kept in
+const NOTES_MAX = 50 // per project
+const NOTE_MAX_CHARS = 500
+const NOTES_ROWS = 15 // the terminal pane's least rows: the title, nine one-row notes, the remove and clear rows, a line each side
+const NOTES_SHOWN = 9 // one digit key each
+const PANE_SIDES = 4 // what an inline pane's sides take of the terminal's width
+const GUESS_COLUMNS = 100 // the terminal's width before it has drawn the line under the prompt box
+const NOTES_KEYS = 'a number puts a note in the prompt box · x removes one · 0 clears all · Esc closes'
+const NOTES_LIST: NotesView = { kind: 'list' }
+const REMOVE_VIEW: NotesView = { kind: 'remove' }
+const CLEAR_VIEW: NotesView = { kind: 'clear' }
+const REMOVE_KEYS = 'a number removes that note · n back to your notes · Esc closes'
+// The band's "Notes" key on the terminal, which opens them: past the five choices a band can offer and the 0 of a
+// model switch. What was copied is kept by /note, or a key the person binds to it.
+const NOTE_KEY = '9'
+const NOTES_KEY_LABEL = 'View notes'
+// The band's "Copy answer" key on the terminal, before the queue's and the notes': Claude's last answer as written,
+// Markdown and all, with no picker in between (Claude Code's own /copy asks which block when there is code).
+const COPY_KEY = '7'
+const COPY_LABEL = 'Copy answer'
+// What /notes export writes, at the project's root unless another file is named; the mark on its first line says the
+// export may write it again, so a file of that name somebody wrote by hand is never overwritten.
+const NOTES_FILE = 'NOTES.md'
+const NOTES_FILE_MARK = '<!-- Written by Companion’s /notes export; the next export writes it again. -->'
+const COPY_MIN_CHARS = 4 // copied text shorter than this is never kept as a note
+const PICK_TITLE = 'Keep from this answer'
+const PICK_KEYS = 'a number keeps a line, again drops it · m more · n your notes · Esc closes'
+const PICK_EMPTY = 'Nothing here to keep line by line. Select the words instead, or /note <text>.'
+const PICK_PAGE = 9 // lines on a page of the picker: one digit key each, as NOTES_ROWS has room for
+const PICK_MAX = 45 // lines offered from one answer
+const PICK_MIN_CHARS = 12 // a shorter fragment is not offered as a line
+const ANSWERS_KEPT = 20 // the completed answers a "Add note" can go under
+const NOTE_BUTTON_LABEL = 'Add note'
+const READING_COPY = 'Reading what you copied…'
+const NOTE_BUTTON_NOTE =
+  'The band’s 7 copies the last answer, 8 opens your queue and 9 your notes. /queue and /note, or keys you bind to them such as Alt+Q and Alt+N, queue or keep what you copied from an answer. In fullscreen, "Add note" also goes under each answer.'
+const QUEUE_KEY = 'queue' // in $.store: every project's queued actions, each carrying the folder it was queued in
+const QUEUE_MAX = 20 // per project
+const QUEUE_MAX_CHARS = 1000
+// The band's "Queue" key on the terminal, before "Notes": 8 opens the queue, as 9 opens the notes. What was copied is
+// queued by /queue, or a key the person binds to it.
+const QUEUE_HOTKEY = '8'
+const QUEUE_BUTTON_LABEL = 'View queue'
+const QUEUE_NOTHING = 'Nothing to queue: copy words from one of Claude’s answers first.'
+const KEYS_GAP = 2 // the columns between two keys, and before the first
+// Each turn's end line, where the terminal draws it, carries what a fitted turn ran on: the engine's own words keep
+// about this many columns of the line, the rest is the fit's.
+const END_LINE_COLUMNS = 46
+const ENDS_KEPT = 20 // the end lines remembered, the last turns'
+const MIN_END_COLUMNS = 12 // narrower than this, the fit's words stay off the end line
+const LABELS_JOIN = ' & ' // how the footer joins its labels
+const FOOTER_GAP = 2 // the columns between two meters
+// A meter in the footer: its label, five cells filled as far as it is used, and its percent, in the theme's success,
+// warning or error colour as it fills.
+const METER_CELLS = 5
+const METER_FULL = '▰'
+const METER_EMPTY = '▱'
+// A turn's cache share on its end line: from this much read from the cache it is good, from CACHE_FAIR fair.
+const CACHE_GOOD = 80
+const CACHE_FAIR = 50
+const FOOTER_GAP_COLUMNS = 6 // between the hint lines and the footer's labels, with room for a short label of the engine's
+const MIN_TIPS_COLUMNS = 20
+// The meters: the footer's context and week labels, the line under the prompt once the context is past NUDGE_PERCENT or
+// the cache has likely gone cold, each turn's cost on its end line, and a compaction at a fill the settings pick.
+const NUDGE_PERCENT = 60 // past this fill the line under the prompt says what each message re-sends
+const TOAST_PERCENT = 80 // past this fill a toast says so too, once until the fill drops under NUDGE_PERCENT
+const WEEK_KIND = 'seven_day' // the rate-limit window the footer's week label reads
+const WEEK_RESET_PERCENT = 80 // from this much of the week used, its label says when the week resets
+const COLD_MIN_TOKENS = 20_000 // a smaller conversation read again uncached costs too little to warn of
+const OFF = 'off'
+const METERS_NOTE =
+  'The footer shows how full the context is and how much of the week is used; past 60% the line under the prompt says what each message sends again; each answer’s end line adds what it cost and how much came from the cache.'
+const COLD_NOTE =
+  'An idle conversation’s prompt cache expires, and the next message then reads it all again at full price; the line under the prompt says so. Its lifetime is not reported: 5 minutes is the cache’s default, 1 hour the longer one.'
+const COMPACT_NOTE = 'Runs /compact on its own once an answer ends past this fill, before Claude Code’s own compaction near the end of the window.'
+// The alert once a long answer ends: a notification through the person's own channel, the one Claude Code's own
+// notifications use; on Windows, where a terminal has no channel, the system's notify sound instead.
+const DONE_NOTE =
+  'Once an answer that ran this long ends, a notification says so through the channel Claude Code’s own notifications use; on Windows with none, a sound plays.'
+const DONE_TITLE = 'Claude is done'
+const DONE_TEXT_CHARS = 120
+const WINDOWS_DING = [
+  'powershell.exe',
+  '-NoProfile',
+  '-NonInteractive',
+  '-Command',
+  '(New-Object Media.SoundPlayer "$env:WINDIR\\Media\\Windows Notify System Generic.wav").PlaySync()',
+] as const
+const DING_TIMEOUT_MS = 10_000
+// /fresh: the conversation handed over to a cleared one. A model writes a short note of the task from the end of the
+// conversation, the files it changed are named after it, /clear starts the conversation over, and the note waits in
+// the prompt box, to edit or send.
+const HANDOFF_SYSTEM = [
+  'You write the note that starts a fresh Claude Code conversation where an earlier one left off, so nothing has to be explained again.',
+  'Write four lines, plain text, no markdown, at most 120 words in all:',
+  'Task: what the person is doing; add the reason only where the conversation gives one, and never remark that it gives none.',
+  'Done: what is finished.',
+  'Next: the next concrete step.',
+  'Notes: decisions, constraints and open questions that still matter; "none" where there are none.',
+  'Use the names the conversation uses for files, commands and things. Never add anything the conversation does not say.',
+].join('\n')
+const HANDOFF_LEAD = 'Picking up from an earlier conversation, cleared to save tokens:'
+const HANDOFF_MAX_TOKENS = 2048 // its thinking counts against the cap
+const HANDOFF_TIMEOUT_MS = 60_000
+const HANDOFF_DIGEST_CHARS = 12_000 // the end of the conversation the note is written from
+const HANDOFF_MESSAGE_CHARS = 1_200 // of each message
+const HANDOFF_FILES = 10 // the files changed named at most, the latest
+const EDIT_TOOLS: ReadonlySet<string> = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+// /clear starts the session's state over, and no session.start follows it: what the band, the hint lines and the
+// footer draw from is read again this long after, once the new conversation stands.
+const CLEAR_RELOAD_MS = 250
+// /ctx: the context X-ray, a pane of what fills the window, each category a bar in its /context colour, then the
+// biggest tool outputs, the MCP servers' tool lists and the memory files, and one tip on what to cut first.
+const XRAY_PANE = 'companion-xray'
+const XRAY_TITLE = 'Context X-ray'
+const XRAY_KEYS = 'Esc closes'
+const XRAY_CELLS = 10
+const XRAY_LABEL_COLUMNS = 22
+const XRAY_PARTS = 3 // the biggest of each list shown
+const XRAY_CHROME = 7 // the pane's rows besides its category rows: the title, the three lists, the tip, one each side
+const CHARS_PER_TOKEN = 4 // a tool output's size in tokens, estimated from its characters
+const XRAY_MIN_OUTPUT = 1_000 // tokens: a smaller tool output is not worth naming
+const MCP_HEAVY = 0.1 // of the window: past this the MCP tool lists are what to cut first
+const MEMORY_HEAVY = 0.05 // of the window, for the memory files
+const CONVERSATION_HEAVY = 40 // percent full: past this the conversation is
+// /companion-setup: a pane that turns on what Companion's clicks and keys need, step by step, nothing without a press.
+const SETUP_PANE = 'companion-setup'
+const SETUP_TITLE = 'Companion setup'
+const SETUP_ROWS = 9 // the title, the two steps, Apply, a line each side, and room to spare
+const SETUP_KEYS_HINT = '↑↓ to move · Enter ticks · a applies · Esc closes'
+const SETUP_STORE_KEY = 'setup' // in $.store: { done: true } once the setup was opened
+const SETUP_NUDGE = 'new here? /companion-setup'
+const QUEUE_ROW_COLUMNS = 13 // the pane's sides and padding, and " next" and " ✕", around an action's row
+// The list 8 opens where nothing new was copied: a pane that takes the keys, no numbers, the ring on an action.
+const QUEUE_PANE = 'companion-queue'
+const QUEUE_TITLE = 'Queue'
+const QUEUE_LIST_KEYS = '↑↓ to pick · Enter takes it · t to the top · x takes it off · Esc closes'
+const QUEUE_PANE_CHROME = 5 // the pane's rows besides its actions: the keys line, the t and x row, a line each side, one spare
 const BASE64_DIGITS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 const CLIPBOARD_TIMEOUT_MS = 15000
 const LAST_LABEL = 'Last: '
@@ -70,6 +232,7 @@ const QUOTE_COLUMNS = 2 // the quote bar before the last prompt, and the space a
 // bar takes the prompt box's own border colour, so the last prompt reads as the person's words.
 const ACCENT = 'suggestion'
 const QUOTE_COLOR = 'promptBorder'
+const QUOTE_BAR = '▎' // before the last prompt in the terminal's band
 const CHEVRON = ' ›'
 const MORE = '⋯' // opens the settings: a text glyph, where ⚙ turns into a colour emoji on some systems
 const SUGGESTED = 'Suggested'
@@ -88,10 +251,9 @@ const ROUTE_NOTE =
 const MENU_KEYS = '↑↓ to move · Enter to change · Esc to close'
 const OPTION_KEYS = '↑↓ to move · Enter or its number to pick · Esc to close'
 const BAND_FOCUS_HINT = 'ctrl+x tab, then ↑↓ and Enter to pick'
-const SETTINGS_HINT = '/companion for settings'
 const HOTKEY_COLUMNS = 3 // "1: " before a numbered choice
 const MENU_LABEL_COLUMNS = 24
-const MENU_ROWS = 24 // the menu's rows, its longest view's, asked of the terminal as the pane opens
+const MENU_ROWS = 31 // the menu's rows, its longest view's, asked of the terminal as the pane opens
 const PROMPT_NOTE = 'VS Code already pins your prompt above its answer, so the band there leaves it out unless this is on. The terminal always shows it.'
 const SAVED_NOTE = 'Saved for every session; other open sessions take a change at their next turn.'
 const LAST_MAX_CHARS = 160 // about two lines where the surface wraps the last prompt
@@ -241,6 +403,8 @@ type Settings = {
   numberKeys: boolean
   /** Whether the band outside the terminal shows the last prompt, which VS Code already pins above its answer. */
   lastPrompt: boolean
+  /** Whether "Add note" sits under each answer in the fullscreen terminal. */
+  noteButton: boolean
   /** How each task's model and effort follow its grade: suggested (a button), switched on its own, or left alone. */
   fit: FitMode
   /** The mode picked while the session ran on each family, which `fit` stands in for where none was. */
@@ -255,6 +419,14 @@ type Settings = {
   grading: string
   /** The model that grades new tasks, at low effort. */
   grader: string
+  /** Whether the meters show: the footer's context and week, the context tip past NUDGE_PERCENT, each turn's cost. */
+  meters: boolean
+  /** The minutes idle after which the cache has likely gone cold, as text; OFF for no warning. */
+  coldAfter: string
+  /** The context's fill, in percent as text, past which an answer's end compacts the conversation; OFF for never. */
+  compactAt: string
+  /** The seconds an answer runs, as text, from which its end raises an alert; OFF for none. */
+  doneAfter: string
 }
 
 const MODELS: readonly SelectOption[] = [
@@ -309,6 +481,23 @@ const LIMITS: readonly SelectOption[] = [
   { value: '200000', label: '200,000 tokens' },
   { value: '400000', label: '400,000 tokens' },
 ]
+const COLD_AFTERS: readonly SelectOption[] = [
+  { value: OFF, label: 'Off' },
+  { value: '5', label: '5 minutes: the cache’s default lifetime' },
+  { value: '60', label: '1 hour: the longer lifetime' },
+]
+const COMPACT_ATS: readonly SelectOption[] = [
+  { value: OFF, label: 'Off' },
+  { value: '70', label: 'At 70% full' },
+  { value: '80', label: 'At 80% full' },
+  { value: '90', label: 'At 90% full' },
+]
+const DONE_AFTERS: readonly SelectOption[] = [
+  { value: OFF, label: 'Off' },
+  { value: '30', label: 'Answers over 30 seconds' },
+  { value: '60', label: 'Answers over 1 minute' },
+  { value: '300', label: 'Answers over 5 minutes' },
+]
 const GRADE_ONCE = 'one'
 const GRADE_TWICE = 'two'
 const GRADINGS: readonly SelectOption[] = [
@@ -325,6 +514,19 @@ const savedSettings = atom({ plugin: 'companion', key: 'settings' } as const, nu
 const routed = atom({ plugin: 'companion', key: 'routed' } as const, null)
 const own = atom({ plugin: 'companion', key: 'own' } as const, null)
 const sessionModel = atom({ plugin: 'companion', key: 'sessionModel' } as const, null)
+const notesHere = atom({ plugin: 'companion', key: 'notes' } as const, [])
+const notesView = atom({ plugin: 'companion', key: 'notesView' } as const, NOTES_LIST)
+const answersDone = atom({ plugin: 'companion', key: 'answers' } as const, [])
+const queueHere = atom({ plugin: 'companion', key: 'queue' } as const, [])
+const queueFocus = atom({ plugin: 'companion', key: 'queueFocus' } as const, null)
+const queueCopied = atom({ plugin: 'companion', key: 'queueCopied' } as const, null)
+const boundKeys = atom({ plugin: 'companion', key: 'keys' } as const, { queue: null, note: null })
+const setupView = atom({ plugin: 'companion', key: 'setup' } as const, { fullscreen: true, keys: true, isFullscreen: false })
+const setupDone = atom({ plugin: 'companion', key: 'setupDone' } as const, false)
+const endLines = atom({ plugin: 'companion', key: 'ends' } as const, [])
+const meter = atom({ plugin: 'companion', key: 'meter' } as const, { percent: null, tokens: null, week: null })
+const isColdNow = atom({ plugin: 'companion', key: 'isCold' } as const, false)
+const xrayView = atom({ plugin: 'companion', key: 'xray' } as const, null)
 // The terminal's settings menu: the list, or the options of the setting it names; and the element the ring is on.
 const MENU_LIST = 'list'
 const menuView = atom({ plugin: 'companion', key: 'menu' } as const, MENU_LIST)
@@ -399,6 +601,19 @@ const fitted = new Map<string, FittedTurn>()
 let runningTurn: string | undefined
 // The main-loop turns the person sent another message during: their answers get no choices, the next message being in.
 const movedOn = new Set<string>()
+// The last main-loop turns that ended, by turn id, with their length: a grade that lands after its turn's end still
+// reaches that turn's end line.
+const endedTurns = new Map<string, number>()
+// What the session had cost as each main-loop turn began, by turn id, until it ends: its own cost is what it adds.
+const costAtStart = new Map<string, number>()
+// The wait for the cache to go cold since the last answer ended; none while a turn runs.
+let coldTimer: Timer | undefined
+// The compaction at a picked fill: whether it may run (once a fill under it was seen, so a compaction that leaves the
+// context past it does not run again and again), and whether one runs now.
+let isCompactArmed = true
+let isCompacting = false
+// Whether the toast for a fill past TOAST_PERCENT was raised, until the fill drops under NUDGE_PERCENT.
+let isFillToasted = false
 // Set once a fitted request failed before it answered: the rest of the session's turns go as the engine makes them.
 let isFitRefused = false
 // The session's own model and effort as last written to state, so a turn writes them again only when they change.
@@ -423,6 +638,7 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
     onPress: pick(stored.onPress, PRESS_ACTIONS, 'send') as Settings['onPress'],
     numberKeys: typeof stored.numberKeys === 'boolean' ? stored.numberKeys : true,
     lastPrompt: typeof stored.lastPrompt === 'boolean' ? stored.lastPrompt : false,
+    noteButton: typeof stored.noteButton === 'boolean' ? stored.noteButton : true,
     // A store from before 0.12.0 holds the old switch: its "on" is Automatic, and its "off" stays off.
     fit: pick(stored.fit, FIT_MODES, typeof stored.route === 'boolean' ? (stored.route ? 'auto' : 'off') : DEFAULT_FIT) as FitMode,
     fitByModel: fitsFrom(stored.fitByModel),
@@ -432,6 +648,10 @@ export function settingsFrom(stored: Readonly<Record<string, unknown>>): Setting
     limit: pick(stored.limit, LIMITS, NO_LIMIT),
     grading: pick(stored.grading, GRADINGS, GRADE_ONCE),
     grader: pick(stored.grader, MODELS, GRADE_MODEL),
+    meters: typeof stored.meters === 'boolean' ? stored.meters : true,
+    coldAfter: pick(stored.coldAfter, COLD_AFTERS, '60'),
+    compactAt: pick(stored.compactAt, COMPACT_ATS, OFF),
+    doneAfter: pick(stored.doneAfter, DONE_AFTERS, '60'),
   }
 }
 
@@ -682,7 +902,8 @@ export async function askNext($: EngineInterface, ask: number, lastPrompt: strin
 export async function suggestNext($: EngineInterface, ask: number, lastPrompt: string, reply: string): Promise<void> {
   const choices = await askNext($, ask, lastPrompt, reply)
   const [likeliest] = choices ?? []
-  if (likeliest === undefined) return
+  // A queued action keeps the box: the person's own next step before a guessed one.
+  if (likeliest === undefined || (await read($, queueHere)).length > 0) return
 
   try {
     await $.prompt.suggest({ text: likeliest }) // Tab to take; VS Code answers "not shown"
@@ -733,6 +954,963 @@ export async function putInBox($: EngineInterface, text: string, choices: readon
   const [surface] = await $.session.surfaces()
   const isCopied = surface !== undefined && (await $.ui.copy({ text, surface })).isCopied
   $.ui.toast(isCopied ? 'Copied: paste it into the box.' : `Could not put it in the box: ${text}`)
+}
+
+/** Whether a stored value has a note's shape: a store from another version, or edited by hand, may hold anything. */
+function isNote(value: unknown): value is Note {
+  if (typeof value !== 'object' || value === null) return false
+  const note = value as Record<string, unknown>
+  return typeof note.id === 'string' && typeof note.text === 'string' && typeof note.at === 'number' && typeof note.root === 'string'
+}
+
+/** The folder the session works in, which notes are kept under; empty where it cannot be read. */
+async function projectRoot($: EngineInterface): Promise<string> {
+  try {
+    return await $.session.root()
+  } catch {
+    return ''
+  }
+}
+
+/** Every project's notes as the store holds them; none where it cannot be read. */
+export async function readNotes($: EngineInterface): Promise<Note[]> {
+  try {
+    const stored = await $.store.get(NOTES_KEY)
+    return Array.isArray(stored) ? stored.filter(isNote) : []
+  } catch {
+    return []
+  }
+}
+
+/** This project's notes, newest first, taken from the store afresh and put in `$.state` for the pane to draw. */
+export async function loadNotes($: EngineInterface): Promise<Note[]> {
+  const root = await projectRoot($)
+  const here = (await readNotes($)).filter(note => note.root === root).sort((a, b) => b.at - a.at)
+  await update($, notesHere, () => here)
+  return here
+}
+
+/** Saves every project's notes; false, with a toast, where the store would not take them. */
+async function writeNotes($: EngineInterface, all: readonly Note[]): Promise<boolean> {
+  try {
+    await $.store.set(NOTES_KEY, [...all])
+    return true
+  } catch (error) {
+    $.ui.toast(`Could not save the note: ${error instanceof Error ? error.message : String(error)}`)
+    return false
+  }
+}
+
+let noteSeq = 0
+/** The terminal's width as its last drawing of the line under the prompt box gave it: a pane is sized before it draws. */
+let terminalColumns: number | undefined
+
+/** The rows `text` takes wrapped at `width`, word by word as the terminal wraps it; a word wider than the row is split. */
+export function wrappedRows(text: string, width: number): number {
+  let rows = 1
+  let used = 0
+  for (const word of text.split(/\s+/).filter(part => part.length > 0)) {
+    const needed = used === 0 ? word.length : used + 1 + word.length
+    if (needed <= width) {
+      used = needed
+      continue
+    }
+    if (used > 0) rows += 1
+    rows += Math.ceil(word.length / width) - 1
+    used = word.length % width || width
+  }
+  return rows
+}
+
+/**
+ * The terminal pane's rows for these notes, each whole at this width: the title, the shown notes wrapped, the remove
+ * and clear rows, the count of older ones, a line each side; never fewer than the picker's page takes.
+ */
+export function notesRows(notes: readonly Note[], columns: number): number {
+  const width = Math.max(10, columns - PANE_SIDES - HOTKEY_COLUMNS)
+  const shown = notes.slice(0, NOTES_SHOWN)
+  const lines = shown.reduce((sum, note) => sum + wrappedRows(note.text, width), 0)
+  return Math.max(NOTES_ROWS, 1 + lines + 2 + (notes.length > shown.length ? 1 : 0) + 2)
+}
+
+/** What keeping a note came to: the note, or why there is none. */
+export type Kept = { note: Note; isNew: boolean } | { note: null; reason: 'empty' | 'full' | 'unsaved' }
+
+/** Keeps a message for later under this project, on one line; one already kept is not kept twice. */
+export async function addNote($: EngineInterface, text: string): Promise<Kept> {
+  const clean = oneLine(text, NOTE_MAX_CHARS)
+  if (clean.length === 0) return { note: null, reason: 'empty' }
+
+  const root = await projectRoot($)
+  const all = await readNotes($)
+  const mine = all.filter(note => note.root === root)
+  const same = mine.find(note => note.text === clean)
+  if (same !== undefined) return { note: same, isNew: false }
+  if (mine.length >= NOTES_MAX) return { note: null, reason: 'full' }
+
+  const at = await $.clock.now()
+  noteSeq += 1
+  const note: Note = { id: `${at}-${noteSeq}`, text: clean, at, root }
+  if (!(await writeNotes($, [...all, note]))) return { note: null, reason: 'unsaved' }
+  await loadNotes($)
+  return { note, isNew: true }
+}
+
+/** Drops notes: one by its id, or with none every note of this project's. */
+export async function dropNotes($: EngineInterface, id?: string): Promise<number> {
+  const root = await projectRoot($)
+  const all = await readNotes($)
+  const kept = all.filter(note => (id === undefined ? note.root !== root : note.id !== id))
+  if (kept.length !== all.length && !(await writeNotes($, kept))) return 0
+  await loadNotes($)
+  return all.length - kept.length
+}
+
+/** A note taken: the pane closes and its words wait in the prompt box to edit and send. The note stays kept. */
+export async function useNote($: EngineInterface, id: string): Promise<void> {
+  const note = (await loadNotes($)).find(candidate => candidate.id === id)
+  if (note === undefined) return
+
+  try {
+    await $.ui.close({ id: NOTES_PANE })
+  } catch {
+    // already closed
+  }
+  await putInBox($, note.text, [])
+}
+
+/** Opens the notes pane on this project's notes; false where no surface draws one. The keys go to it in the terminal. */
+export async function openNotes($: EngineInterface): Promise<boolean> {
+  const notes = await loadNotes($)
+  const rows = (await read($, notesView)).kind === 'pick' ? NOTES_ROWS : notesRows(notes, terminalColumns ?? GUESS_COLUMNS)
+  const opened = await $.ui.open({ id: NOTES_PANE, title: NOTES_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows })
+  return opened.isPlaced
+}
+
+/** Opens the notes, or where no surface draws a pane, answers with them as numbered lines. */
+export async function showNotes($: EngineInterface): Promise<{ text: string }> {
+  await update($, notesView, () => NOTES_LIST)
+  if (await openNotes($)) return { text: 'Notes opened.' }
+  return { text: `${notesLines(await loadNotes($), notesEmpty(await loadBoundKeys($)))}\nNo panel draws here: run /notes in VS Code or the terminal to take one.` }
+}
+
+/** What a note's keeping says, in a line. */
+export function keptLine(kept: Kept, count: number): string {
+  if (kept.note === null) {
+    if (kept.reason === 'empty') return 'Nothing to keep. /note <text> keeps a message for later.'
+    if (kept.reason === 'full') return `Notes are full (${NOTES_MAX} for this project): take or clear one first with /notes.`
+    return 'Could not keep the note.'
+  }
+  const total = `${count} ${count === 1 ? 'note' : 'notes'}`
+  return `${kept.isNew ? 'Kept' : 'Already kept'}: ${oneLine(kept.note.text, 80)} (${total}, /notes opens them)`
+}
+
+/** The notes as numbered lines, for a host that draws no pane. */
+export function notesLines(notes: readonly Note[], empty: string): string {
+  return notes.length === 0 ? empty : notes.map((note, i) => `${i + 1}. ${oneLine(note.text, PANE_MAX_CHARS)}`).join('\n')
+}
+
+/** The notes as a Markdown page: the export's mark, a heading, then each note with the day it was kept, newest first. */
+export function notesPage(notes: readonly Note[]): string {
+  const day = (at: number) => new Date(at).toISOString().slice(0, 10)
+  return [NOTES_FILE_MARK, '', '# Notes', '', 'Kept with Companion in this project, newest first.', '', ...notes.map(note => `- ${note.text} (${day(note.at)})`), ''].join('\n')
+}
+
+/**
+ * /notes export: this project's notes written as a Markdown page at the project's root, NOTES.md or the file named. A
+ * file of that name the export did not write is left alone, and so is a path out of the project. What it came to, in
+ * a line.
+ */
+export async function exportNotes($: EngineInterface, file: string): Promise<string> {
+  const name = file.trim().length > 0 ? file.trim() : NOTES_FILE
+  if (/^([a-zA-Z]:|[\\/~])/.test(name) || name.split(/[\\/]/).includes('..')) return `Notes are written inside this project: ${name} is outside it.`
+  const notes = await loadNotes($)
+  if (notes.length === 0) return 'No notes to export yet.'
+
+  const root = await projectRoot($)
+  const path = root.length > 0 ? `${root}/${name}` : name
+  try {
+    if ((await $.fs.exists(path)) && !(await $.fs.read(path)).startsWith(NOTES_FILE_MARK)) {
+      return `${name} is already there and /notes export did not write it, so it was left alone. /notes export <file> writes somewhere else.`
+    }
+    await $.fs.write(path, notesPage(notes))
+  } catch (error) {
+    return `Could not write ${name}: ${error instanceof Error ? error.message : String(error)}`
+  }
+  return `Wrote ${notes.length} ${notes.length === 1 ? 'note' : 'notes'} to ${name}.`
+}
+
+/** Markdown's inline marks taken off a line: emphasis, code ticks and links, as the words read on screen. */
+function plainWords(text: string): string {
+  return text
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/(^|[\s(])[*_](\S(?:.*?\S)?)[*_](?=[\s).,;:!?]|$)/g, '$1$2')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * An answer's lines worth keeping one by one, in order: each sentence of its paragraphs, list items and quotes. Code,
+ * tables, headings and rules are left out, as are fragments too short to stand alone; a line said twice comes once.
+ */
+export function linesOf(markdown: string): string[] {
+  const lines: string[] = []
+  let paragraph: string[] = []
+  let isCode = false
+  const flush = () => {
+    const text = plainWords(paragraph.join(' '))
+    paragraph = []
+    // A sentence ends at . ! or ? before a space and a capital, a digit or an opening mark.
+    for (const sentence of text.split(/(?<=[.!?])\s+(?=[A-Z0-9"'“‘(])/)) {
+      const line = sentence.trim()
+      if (line.length >= PICK_MIN_CHARS && /\p{L}/u.test(line) && !lines.includes(line)) lines.push(line)
+    }
+  }
+
+  for (const raw of markdown.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (/^(```|~~~)/.test(line)) {
+      flush()
+      isCode = !isCode
+      continue
+    }
+    if (isCode) continue
+    if (line.length === 0 || line.startsWith('|') || /^#{1,6}\s/.test(line) || /^([-*_])(\s*\1){2,}$/.test(line)) {
+      flush()
+      continue
+    }
+    const item = /^(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line)
+    if (item !== null) {
+      flush()
+      paragraph.push(item[1] ?? '')
+      continue
+    }
+    paragraph.push(line.replace(/^>\s?/, ''))
+  }
+  flush()
+  return lines.slice(0, PICK_MAX)
+}
+
+// The selection last kept as a note. The engine answers with a selection until the person's next prompt or command has
+// run, so a "Add note" and then /note would read the same words twice: kept once, they count as no selection after.
+let usedSelection: string | null = null
+// The copied text last kept as a note. The clipboard holds it until the next copy, so a second 9 would keep the same
+// words again: kept once, they count as nothing copied, and 9 lists the answer's lines instead.
+let usedCopy: string | null = null
+
+/** The text the person selected last and no note took yet, trimmed; null with none, where none is seen or readable. */
+async function selectedText($: EngineInterface): Promise<string | null> {
+  try {
+    const text = (await $.ui.selection())?.text.trim() ?? ''
+    if (text.length === 0) usedSelection = null
+    return text.length > 0 && text !== usedSelection ? text : null
+  } catch {
+    return null
+  }
+}
+
+/** Keeps what the person selected as a note and says so in a line; null where nothing is selected. */
+async function keepSelection($: EngineInterface): Promise<string | null> {
+  const selected = await selectedText($)
+  if (selected === null) return null
+  usedSelection = selected
+  // The fullscreen terminal copied the selection too: that copy is the same words, used already.
+  usedCopy = cleanCopy(selected)
+  const kept = await addNote($, selected)
+  return keptLine(kept, (await loadNotes($)).length)
+}
+
+/**
+ * Copied text as a note keeps it: each line without the mark the terminal or markdown starts it with (a reply's
+ * bullet, a list item's dash or number, a quote or heading mark), all on one line.
+ */
+export function cleanCopy(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map(line => line.trim().replace(/^(?:[●⎿│•▪◦*+-]|\d+[.)]|>|#{1,6})\s+/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** A text as the terminal shows it, to find copied words in an answer: no marks, on one line, in any case. */
+function comparable(text: string): string {
+  return plainWords(cleanCopy(text)).toLowerCase()
+}
+
+/** Whether copied text came from one of the answers: its words, in their order, inside one of them. */
+export function isFromAnswers(answers: readonly string[], copied: string): boolean {
+  const words = comparable(copied)
+  return words.length >= COPY_MIN_CHARS && answers.some(answer => comparable(answer).includes(words))
+}
+
+// Where no Windows PowerShell is: macOS, then Wayland, then X11, the first that answers.
+const CLIPBOARD_READERS: readonly (readonly string[])[] = [
+  ['pbpaste'],
+  ['wl-paste', '--no-newline'],
+  ['xclip', '-selection', 'clipboard', '-o'],
+  ['xsel', '--clipboard', '--output'],
+]
+// On Windows, PowerShell 7 where it is installed: it starts in about a second, Windows PowerShell 5.1 in about three.
+const GET_CLIPBOARD = '[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Clipboard -Raw'
+const WINDOWS_CLIPBOARD_READERS: readonly (readonly string[])[] = [
+  ['pwsh.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', GET_CLIPBOARD],
+  ['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', GET_CLIPBOARD],
+]
+// The reader that answered last, tried first next time, so a missing one is not started on every press.
+let clipboardReader: readonly string[] | undefined
+
+/** The text on the machine's clipboard, read only when the person asks to keep it; null with none or no way to read. */
+export async function readHostClipboard($: EngineInterface): Promise<string | null> {
+  const known = (await $.env.get('OS')) === 'Windows_NT' ? WINDOWS_CLIPBOARD_READERS : CLIPBOARD_READERS
+  const readers = clipboardReader === undefined ? known : [clipboardReader, ...known.filter(argv => argv !== clipboardReader)]
+  for (const argv of readers) {
+    try {
+      const done = await $.process.run(argv, { timeoutMs: CLIPBOARD_TIMEOUT_MS })
+      if (done.exitCode !== 0) continue
+      clipboardReader = argv
+      return done.stdout.trim().length > 0 ? done.stdout : null
+    } catch {
+      // not on this machine: the next one
+    }
+  }
+  return null
+}
+
+/** Keeps what the person copied from one of the recent answers and says so in a line; null where nothing such is. */
+async function keepCopy($: EngineInterface): Promise<string | null> {
+  const copied = await readHostClipboard($)
+  const clean = copied === null ? '' : cleanCopy(copied)
+  if (clean.length === 0) {
+    usedCopy = null
+    return null
+  }
+  // Text from anywhere else (a password, a link, the person's own words) is never kept, nor shown.
+  if (clean === usedCopy || !isFromAnswers(await read($, answersDone), clean)) return null
+  usedCopy = clean
+  const kept = await addNote($, clean)
+  return keptLine(kept, (await loadNotes($)).length)
+}
+
+/** Whether a block of an answer, as drawn, ends one of the completed answers: "Add note" goes under those alone. */
+export function endsAnswer(answers: readonly string[], block: string): boolean {
+  const squash = (text: string) => text.replace(/\s+/g, ' ').trim()
+  const shown = squash(block)
+  return shown.length > 0 && answers.some(answer => squash(answer).endsWith(shown))
+}
+
+/** Opens the notes pane on an answer's lines to pick from; false where no surface draws one. */
+export async function openPicker($: EngineInterface, answer: string): Promise<boolean> {
+  const view: NotesView = { kind: 'pick', lines: linesOf(answer), page: 0 }
+  await update($, notesView, () => view)
+  return openNotes($)
+}
+
+/**
+ * "Add note" pressed, under an answer or as the band's 9: keeps the selection, or what was copied from an answer; with
+ * neither, lists the lines of that answer, or of the last one.
+ */
+export async function pressNoteButton($: EngineInterface, answer?: string): Promise<void> {
+  let said = await keepSelection($)
+  if (said === null) {
+    // Reading the clipboard starts a process, about a second on Windows: the press answers at once.
+    $.ui.toast(READING_COPY)
+    said = await keepCopy($)
+  }
+  if (said !== null) {
+    $.ui.toast(said)
+    return
+  }
+  const lines = answer ?? (await read($, answersDone)).at(-1)
+  if (lines !== undefined) await openPicker($, lines)
+}
+
+/** A line of the picker pressed: kept as a note, or, kept already, dropped again. */
+export async function toggleLine($: EngineInterface, line: string): Promise<void> {
+  const clean = oneLine(line, NOTE_MAX_CHARS)
+  const kept = (await loadNotes($)).find(note => note.text === clean)
+  if (kept !== undefined) {
+    await dropNotes($, kept.id)
+    return
+  }
+  const result = await addNote($, line)
+  if (result.note === null) $.ui.toast(keptLine(result, (await loadNotes($)).length))
+}
+
+/** The picker's next page of lines, back to the first after the last. */
+async function turnPage($: EngineInterface): Promise<void> {
+  await update($, notesView, view =>
+    view.kind === 'pick' ? { ...view, page: (view.page + 1) % Math.max(1, Math.ceil(view.lines.length / PICK_PAGE)) } : view,
+  )
+}
+
+/** From the picker, the remove list or the question back to the notes. */
+async function showList($: EngineInterface): Promise<void> {
+  await update($, notesView, () => NOTES_LIST)
+}
+
+/** The terminal's notes to remove one by its number. */
+async function showRemove($: EngineInterface): Promise<void> {
+  await update($, notesView, () => REMOVE_VIEW)
+}
+
+/** A note removed from the remove list, and the notes again. */
+async function removeNote($: EngineInterface, id: string): Promise<void> {
+  await dropNotes($, id)
+  await showList($)
+}
+
+/** Asks, in the notes pane, before every note of this project goes. */
+async function askClear($: EngineInterface): Promise<void> {
+  await update($, notesView, () => CLEAR_VIEW)
+}
+
+/** The clear confirmed: this project's notes gone, and the empty list. */
+async function clearNotes($: EngineInterface): Promise<void> {
+  await dropNotes($)
+  await showList($)
+}
+
+/** A keystroke as the keybindings file writes it ("alt+q", "ctrl+k ctrl+q") as it reads on screen ("Alt+Q"). */
+export function keyName(stroke: string): string {
+  const word = (part: string) => (/^(alt|meta|opt|option)$/i.test(part) ? 'Alt' : part.length === 1 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+  return stroke
+    .trim()
+    .split(/\s+/)
+    .map(chord => chord.split('+').map(word).join('+'))
+    .join(' ')
+}
+
+/**
+ * The keys the person's keybindings file binds to /queue and /note (`command:queue`, `command:note`) where the prompt
+ * box takes them, the Chat or Global context; none where the file is missing or not JSON.
+ */
+export async function readBoundKeys($: EngineInterface): Promise<BoundKeys> {
+  const found: BoundKeys = { queue: null, note: null }
+  try {
+    const file: unknown = JSON.parse(await $.fs.read(await keybindingsPath($)))
+    const blocks = typeof file === 'object' && file !== null && Array.isArray((file as { bindings?: unknown }).bindings) ? (file as { bindings: unknown[] }).bindings : []
+    for (const block of blocks) {
+      if (typeof block !== 'object' || block === null) continue
+      const { context, bindings } = block as { context?: unknown; bindings?: unknown }
+      if ((context !== 'Chat' && context !== 'Global') || typeof bindings !== 'object' || bindings === null) continue
+      for (const [stroke, action] of Object.entries(bindings)) {
+        if (action === 'command:queue' && found.queue === null) found.queue = keyName(stroke)
+        if (action === 'command:note' && found.note === null) found.note = keyName(stroke)
+      }
+    }
+  } catch {
+    // no keybindings file, or one that is not JSON: nothing bound
+  }
+  return found
+}
+
+/** Reads the bound keys afresh into `$.state`, for the band's hints: the file reloads in Claude Code as it changes. */
+async function loadBoundKeys($: EngineInterface): Promise<BoundKeys> {
+  const keys = await readBoundKeys($)
+  await update($, boundKeys, () => keys)
+  return keys
+}
+
+/** Where Claude Code keeps the person's keybindings: its config folder (CLAUDE_CONFIG_DIR, else ~/.claude). */
+async function keybindingsPath($: EngineInterface): Promise<string> {
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? ''
+  const configDir = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${home}/.claude`
+  return `${configDir}/keybindings.json`
+}
+
+// The keys /companion-setup binds where the prompt box takes them: Alt+Q to /queue, Alt+N to /note.
+const SETUP_BINDINGS: readonly (readonly [string, string])[] = [
+  ['alt+q', 'command:queue'],
+  ['alt+n', 'command:note'],
+]
+
+/** What binding the setup's keys came to: the file's new text, the keys added, and those the person uses already. */
+export type KeysAdded = { text: string; added: string[]; taken: string[] }
+
+/** A block of a keybindings file: its context and its keys. */
+type BindingBlock = { context?: unknown; bindings: Record<string, unknown> }
+
+/**
+ * A keybindings file with Alt+Q and Alt+N added to its Chat block (made where there is none), every other binding as it
+ * was. A key the person already uses for something else is left alone, and an action already on some key is not bound
+ * twice. Null for text that is not a keybindings file's JSON, which is never written over.
+ */
+export function withCompanionKeys(text: string | null): KeysAdded | null {
+  let file: Record<string, unknown> & { bindings: unknown[] }
+  if (text === null || text.trim().length === 0) {
+    file = { $schema: 'https://www.schemastore.org/claude-code-keybindings.json', $docs: 'https://code.claude.com/docs/en/keybindings', bindings: [] }
+  } else {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      return null
+    }
+    if (typeof parsed !== 'object' || parsed === null || !Array.isArray((parsed as { bindings?: unknown }).bindings)) return null
+    file = parsed as Record<string, unknown> & { bindings: unknown[] }
+  }
+
+  const isBlock = (block: unknown): block is BindingBlock =>
+    typeof block === 'object' && block !== null && typeof (block as { bindings?: unknown }).bindings === 'object' && (block as { bindings?: unknown }).bindings !== null
+  const blocks = file.bindings.filter(isBlock)
+  const bound = new Set(blocks.filter(block => block.context === 'Chat' || block.context === 'Global').flatMap(block => Object.values(block.bindings)))
+  let chat = blocks.find(block => block.context === 'Chat')
+  const added: string[] = []
+  const taken: string[] = []
+  for (const [stroke, action] of SETUP_BINDINGS) {
+    if (bound.has(action)) continue
+    if (chat === undefined) {
+      chat = { context: 'Chat', bindings: {} }
+      file.bindings.push(chat)
+    }
+    if (chat.bindings[stroke] !== undefined) {
+      taken.push(keyName(stroke))
+      continue
+    }
+    chat.bindings[stroke] = action
+    added.push(keyName(stroke))
+  }
+  return { text: `${JSON.stringify(file, null, 2)}\n`, added, taken }
+}
+
+/** Binds Alt+Q and Alt+N in the person's keybindings file, every other binding kept; what it came to, in a line. */
+async function bindCompanionKeys($: EngineInterface): Promise<string> {
+  const path = await keybindingsPath($)
+  let current: string | null
+  try {
+    current = (await $.fs.exists(path)) ? await $.fs.read(path) : null
+  } catch {
+    return 'Could not read keybindings.json, so no keys were bound.'
+  }
+  const next = withCompanionKeys(current)
+  if (next === null) return 'keybindings.json is not a keybindings file Companion can read, so it was left alone.'
+  if (next.added.length > 0) {
+    try {
+      await $.fs.write(path, next.text)
+    } catch (error) {
+      return `Could not write keybindings.json: ${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+  await loadBoundKeys($)
+  const said: string[] = []
+  if (next.added.length > 0) said.push(`Bound ${next.added.join(' and ')}.`)
+  if (next.taken.length > 0) {
+    said.push(`${next.taken.join(' and ')} ${next.taken.length === 1 ? 'does' : 'do'} something else for you already: bind /queue or /note to another key in keybindings.json.`)
+  }
+  return said.length > 0 ? said.join(' ') : 'Your keys for /queue and /note were bound already.'
+}
+
+/** Whether the setup was opened once, as the store says; the band's line about it goes away then. */
+async function loadSetupDone($: EngineInterface): Promise<boolean> {
+  let done = false
+  try {
+    const stored = await $.store.get(SETUP_STORE_KEY)
+    done = typeof stored === 'object' && stored !== null && (stored as { done?: unknown }).done === true
+  } catch {
+    // a store that cannot be read: not set up
+  }
+  await update($, setupDone, () => done)
+  return done
+}
+
+/** /companion-setup: opens the setup's pane, each step ticked unless it is done already. */
+export async function openSetup($: EngineInterface, isFullscreen: boolean): Promise<boolean> {
+  const keys = await loadBoundKeys($)
+  await update($, setupView, () => ({ fullscreen: !isFullscreen, keys: keys.queue === null || keys.note === null, isFullscreen }))
+  // Opened once, the line inviting to it has done its work.
+  try {
+    await $.store.set(SETUP_STORE_KEY, { done: true })
+  } catch {
+    // the line comes back next session
+  }
+  await update($, setupDone, () => true)
+  const opened = await $.ui.open({ id: SETUP_PANE, title: SETUP_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: SETUP_ROWS })
+  return opened.isPlaced
+}
+
+/** A step of the setup ticked or unticked. */
+async function toggleSetup($: EngineInterface, step: 'fullscreen' | 'keys'): Promise<void> {
+  await update($, setupView, view => ({ ...view, [step]: !view[step] }))
+}
+
+/**
+ * The setup applied: the keys bound first, then the pane closed and what was done said, and fullscreen last, since
+ * /tui relaunches the session (with the conversation) into it. Where a plugin may not run /tui, the person is told to.
+ */
+async function applySetup($: EngineInterface): Promise<void> {
+  const view = await read($, setupView)
+  const keys = await read($, boundKeys)
+  const said = view.keys && (keys.queue === null || keys.note === null) ? await bindCompanionKeys($) : null
+  try {
+    await $.ui.close({ id: SETUP_PANE })
+  } catch {
+    // already closed
+  }
+  const toFullscreen = view.fullscreen && !view.isFullscreen
+  if (!toFullscreen) {
+    $.ui.toast(said ?? 'Nothing to change: Companion is set up.')
+    return
+  }
+  $.ui.toast(`${said === null ? '' : `${said} `}Switching to fullscreen…`)
+  try {
+    await $.command.run({ command: 'tui', args: 'fullscreen' })
+  } catch {
+    $.ui.toast('Type /tui fullscreen to switch to fullscreen.')
+  }
+}
+
+/** How to run a command, said the person's way: the key bound to it, else the command itself. */
+const pressOrRun = (key: string | null, command: string) => (key === null ? `run /${command}` : `press ${key}`)
+
+/** How to queue or keep what was copied, with the person's keys where bound. */
+export function copyHint(keys: BoundKeys): string {
+  return `Copy text, then ${keys.queue ?? '/queue'} to queue or ${keys.note ?? '/note'} to note`
+}
+
+/**
+ * What Companion's line under the prompt box says, and of what: the context's tip, the band's choices, kept words, the
+ * setup, the keys.
+ */
+type HintFacts = { context?: string; choices: number; hasKept: boolean; isSetUp: boolean; keys: BoundKeys }
+
+/**
+ * Companion's lines under the engine's hint line, one subject each, the likeliest needed first: what the context costs
+ * where it grew or went cold; the invitation to the setup until it was opened; how to work the keys, that is how to pick
+ * a choice with the number keys off (numbered, the choices say it themselves) and how to queue or keep what was copied.
+ * Empty where there is nothing to say.
+ */
+export function tipLines(
+  current: Pick<Settings, 'numberKeys' | 'onPress' | 'noteButton'>,
+  { context = '', choices, hasKept, isSetUp, keys }: HintFacts,
+): string[] {
+  const keysTip = [choices > 0 && !current.numberKeys ? pickHint(current, choices) : '', current.noteButton && hasKept ? copyHint(keys) : '']
+    .filter(part => part.length > 0)
+    .join(' · ')
+  return [context, isSetUp ? '' : SETUP_NUDGE, keysTip].filter(line => line.length > 0)
+}
+
+/** The footer's counts on the terminal, with the keys on: what waits in this project's queue and notes. */
+async function countsOf($: EngineInterface, current: Settings): Promise<string[]> {
+  return current.noteButton ? footerCounts((await read($, queueHere)).length, (await read($, notesHere)).length) : []
+}
+
+/** The meters on their own line, the last under the prompt box: each a label, five cells and its percent in colour. */
+function meterViews(ui: Parts, meters: readonly Meter[]) {
+  const { Box, Text } = ui
+  return meters.map(one => {
+    const full = meterCells(one.percent)
+    const color = meterColor(one.percent)
+    return (
+      <Box key={one.key}>
+        <Text dimColor>{`${one.label} `}</Text>
+        <Text color={color}>{METER_FULL.repeat(full)}</Text>
+        <Text dimColor>{METER_EMPTY.repeat(METER_CELLS - full)}</Text>
+        <Text color={color}>{` ${one.percent}%`}</Text>
+        {one.after !== undefined && <Text dimColor>{` ${one.after}`}</Text>}
+      </Box>
+    )
+  })
+}
+
+/** The footer's labels for this project's queue and notes: "2 queued", "1 note"; none for what is empty. */
+export function footerCounts(queued: number, notes: number): string[] {
+  return [queued > 0 ? `${queued} queued` : '', notes > 0 ? `${notes} ${notes === 1 ? 'note' : 'notes'}` : ''].filter(label => label.length > 0)
+}
+
+/** What /queue on its own says when nothing was copied from an answer. */
+export function nothingCopied(keys: BoundKeys): string {
+  return `Nothing copied from an answer: select words in one of Claude’s answers, copy them, then ${pressOrRun(keys.queue, 'queue')} again.`
+}
+
+/** What the notes say with none kept yet. */
+export function notesEmpty(keys: BoundKeys): string {
+  return `No notes yet. Copy words from an answer and ${pressOrRun(keys.note, 'note')}, or /note <text>.`
+}
+
+/** What the queue says with nothing queued. */
+export function queueEmpty(keys: BoundKeys): string {
+  return `Nothing queued. Copy words from an answer and ${pressOrRun(keys.queue, 'queue')}, or /queue <text>.`
+}
+
+// The queue: actions copied out of the answers to send later, one at a time. /queue on its own (or a key the person
+// binds to it, Alt+Q) queues what they selected or copied from an answer, as /note keeps it as a note; the footer counts
+// the queue, and the prompt box offers the next one as its grey text for Tab to take. The band's 8 opens the queue as a
+// list the keys work, where an action moves to the top or comes off, unsent; a prompt sent that is a queued action
+// (with more words after it, or none) leaves the queue. Kept per project in this mod's store, like the notes, across
+// sessions.
+
+/** Every project's queued actions as the store holds them, in queue order; none where it cannot be read. */
+export async function readQueue($: EngineInterface): Promise<QueuedAction[]> {
+  try {
+    const stored = await $.store.get(QUEUE_KEY)
+    // A queued action has a note's shape: a store from another version, or edited by hand, may hold anything.
+    return Array.isArray(stored) ? stored.filter(isNote) : []
+  } catch {
+    return []
+  }
+}
+
+/** This project's queued actions, the next one first, taken from the store afresh and put in `$.state` for the band. */
+export async function loadQueue($: EngineInterface): Promise<QueuedAction[]> {
+  const root = await projectRoot($)
+  const here = (await readQueue($)).filter(action => action.root === root)
+  await update($, queueHere, () => here)
+  return here
+}
+
+/** Saves every project's queue; false, with a toast, where the store would not take it. */
+async function writeQueue($: EngineInterface, all: readonly QueuedAction[]): Promise<boolean> {
+  try {
+    await $.store.set(QUEUE_KEY, [...all])
+    return true
+  } catch (error) {
+    $.ui.toast(`Could not save the queue: ${error instanceof Error ? error.message : String(error)}`)
+    return false
+  }
+}
+
+let queueSeq = 0
+
+/** What queueing came to: the action, or why there is none. */
+export type Queuing = { action: QueuedAction; isNew: boolean } | { action: null; reason: 'empty' | 'full' | 'unsaved' }
+
+/** Queues an action at the bottom of this project's queue, on one line; one queued already is not queued twice. */
+export async function addToQueue($: EngineInterface, text: string): Promise<Queuing> {
+  const clean = oneLine(text, QUEUE_MAX_CHARS)
+  if (clean.length === 0) return { action: null, reason: 'empty' }
+
+  const root = await projectRoot($)
+  const all = await readQueue($)
+  const mine = all.filter(action => action.root === root)
+  const same = mine.find(action => action.text === clean)
+  if (same !== undefined) return { action: same, isNew: false }
+  if (mine.length >= QUEUE_MAX) return { action: null, reason: 'full' }
+
+  const at = await $.clock.now()
+  queueSeq += 1
+  const action: QueuedAction = { id: `${at}-${queueSeq}`, text: clean, at, root }
+  if (!(await writeQueue($, [...all, action]))) return { action: null, reason: 'unsaved' }
+  // The first action queued takes the prompt box's grey text from the likeliest suggestion.
+  if ((await loadQueue($)).length === 1) await offerNext($)
+  return { action, isNew: true }
+}
+
+/**
+ * Takes one action off the queue by its id; where it was the next one, the box offers the new next one, unless the
+ * action went as a prompt (`isSent`), whose turn offers it when it ends.
+ */
+export async function dropFromQueue($: EngineInterface, id: string, isSent = false): Promise<void> {
+  const root = await projectRoot($)
+  const all = await readQueue($)
+  const kept = all.filter(action => action.id !== id)
+  if (kept.length === all.length) return
+  const wasNext = all.find(action => action.root === root)?.id === id
+  if (!(await writeQueue($, kept))) return
+  await loadQueue($)
+  if (wasNext && !isSent) await offerNext($)
+}
+
+/** Moves an action to the top of the queue: the next one, which the prompt box offers for Tab to take. */
+export async function moveToTop($: EngineInterface, id: string): Promise<void> {
+  const root = await projectRoot($)
+  const all = await readQueue($)
+  const mine = all.filter(action => action.root === root)
+  const moved = mine.find(action => action.id === id)
+  if (moved === undefined) return
+  if (mine[0]?.id === id) {
+    $.ui.toast('Already the next one: Tab takes it into the prompt box.')
+    return
+  }
+  const others = all.filter(action => action.root !== root)
+  if (!(await writeQueue($, [...others, moved, ...mine.filter(action => action.id !== id)]))) return
+  await loadQueue($)
+  await offerNext($)
+}
+
+/** Takes every action of this project off the queue; how many went. */
+export async function clearQueue($: EngineInterface): Promise<number> {
+  const root = await projectRoot($)
+  const all = await readQueue($)
+  const kept = all.filter(action => action.root !== root)
+  if (kept.length !== all.length && !(await writeQueue($, kept))) return 0
+  await loadQueue($)
+  return all.length - kept.length
+}
+
+/** The prompt box's grey text, Tab to take: the next queued action, else the likeliest suggestion. */
+async function offerNext($: EngineInterface): Promise<void> {
+  const offer = (await read($, queueHere))[0]?.text ?? (await read($, suggested))?.choices[0]
+  if (offer === undefined) return
+  try {
+    await $.prompt.suggest({ text: offer }) // shown over an empty box while no turn runs
+  } catch {
+    // the band shows it
+  }
+}
+
+/** A prompt the person sent that is a queued action, as Tab took it, more words after it or none: it leaves the queue. */
+async function sentFromQueue($: EngineInterface, text: string): Promise<void> {
+  const sent = oneLine(text, Number.MAX_SAFE_INTEGER)
+  const action = (await loadQueue($)).find(candidate => sent.startsWith(candidate.text))
+  if (action !== undefined) await dropFromQueue($, action.id, true)
+}
+
+/** What the person selected, else what they copied from one of the recent answers, on one line; null with neither. */
+async function copiedFromAnswer($: EngineInterface): Promise<string | null> {
+  try {
+    // A selection is the person's own pick (the fullscreen terminal's), wherever on the screen they made it.
+    const selected = cleanCopy((await $.ui.selection())?.text ?? '')
+    if (selected.length > 0) return selected
+  } catch {
+    // none seen here
+  }
+  // With no answer yet nothing copied can be from one: the clipboard is not read.
+  const answers = await read($, answersDone)
+  if (answers.length === 0) return null
+  // Reading the clipboard starts a process, about a second on Windows: the press answers at once.
+  $.ui.toast(READING_COPY)
+  const copied = await readHostClipboard($)
+  const clean = copied === null ? '' : cleanCopy(copied)
+  // Text from anywhere else (a password, a link, the person's own words) is never queued, nor shown.
+  return clean.length > 0 && isFromAnswers(answers, clean) ? clean : null
+}
+
+/** What queueing says, in a line. */
+export function queuedLine(queuing: Queuing, count: number): string {
+  if (queuing.action === null) {
+    if (queuing.reason === 'empty') return QUEUE_NOTHING
+    if (queuing.reason === 'full') return `The queue is full (${QUEUE_MAX} for this project): send one or take one off first.`
+    return 'Could not queue it.'
+  }
+  return `${queuing.isNew ? 'Queued' : 'Already queued'}: ${oneLine(queuing.action.text, 80)} (${count} in the queue, 8 to view)`
+}
+
+/** The queue as numbered lines, the next one first, for /queue list; `empty` with nothing queued. */
+export function queueLines(queue: readonly QueuedAction[], empty: string): string {
+  return queue.length === 0 ? empty : queue.map((action, i) => `${i + 1}. ${oneLine(action.text, PANE_MAX_CHARS)}`).join('\n')
+}
+
+/**
+ * /queue on its own, and so a key bound to it (Alt+Q): queues what the person selected or copied from an answer, and
+ * says so in a line. Words the last /queue took that are still on the clipboard once sent or taken off count as nothing
+ * new, so a stale clipboard never queues them again.
+ */
+export async function queueTheCopy($: EngineInterface): Promise<string> {
+  const copied = await copiedFromAnswer($)
+  const nothing = nothingCopied(await read($, boundKeys))
+  if (copied === null) return nothing
+  const isQueued = (await loadQueue($)).some(action => action.text === oneLine(copied, QUEUE_MAX_CHARS))
+  if (!isQueued && copied === (await read($, queueCopied))) return nothing
+  await update($, queueCopied, () => copied)
+  return queuedLine(await addToQueue($, copied), (await read($, queueHere)).length)
+}
+
+/** "Queue" pressed, the band's 8: opens the queue as a list to work from the keys; with nothing queued, says how to queue. */
+export async function pressQueueButton($: EngineInterface): Promise<void> {
+  if ((await loadQueue($)).length === 0) {
+    $.ui.toast(queueEmpty(await read($, boundKeys)))
+    return
+  }
+  await openQueue($)
+}
+
+/** "Copy answer" pressed, the band's 7: Claude's last answer as written, Markdown and all, onto the clipboard. */
+async function copyLastAnswer($: EngineInterface, surface: RenderSurface): Promise<void> {
+  const answer = (await read($, answersDone)).at(-1)
+  if (answer === undefined) {
+    $.ui.toast('No answer to copy yet.')
+    return
+  }
+  let isCopied = false
+  try {
+    isCopied = (await $.ui.copy({ text: answer, surface })).isCopied
+  } catch {
+    // no surface clipboard here: the machine's
+  }
+  if (!isCopied) isCopied = await copyToHostClipboard($, answer)
+  $.ui.toast(isCopied ? `Copied the last answer (${answer.length.toLocaleString('en-US')} characters).` : 'Could not copy the answer here. /copy does it too.')
+}
+
+/** "Notes" pressed, the band's 9 or the picker's n: opens this project's notes, the pane sized again for them. */
+async function pressNotesKey($: EngineInterface): Promise<void> {
+  await update($, notesView, () => NOTES_LIST)
+  await openNotes($)
+}
+
+/** The key of the queue list's row `i`, from 0: rows go by place, so the ring stays put when the list changes. */
+const queueRowKey = (i: number) => `queued-${i + 1}`
+
+/** Opens the queue as a list that takes the keys, the ring on the next action; false where no surface draws a pane. */
+export async function openQueue($: EngineInterface): Promise<boolean> {
+  const queue = await loadQueue($)
+  await update($, queueFocus, () => null)
+  const rows = Math.min(QUEUE_MAX, Math.max(1, queue.length)) + QUEUE_PANE_CHROME
+  const opened = await $.ui.open({ id: QUEUE_PANE, title: QUEUE_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows })
+  // The ring shows on the next action from the start, so the first ↓ goes to the one after it.
+  if (opened.isPlaced) await focusQueueRow($, 0)
+  return opened.isPlaced
+}
+
+/** The action the list's ring is on, or the next one before the ring moved. */
+async function focusedAction($: EngineInterface): Promise<{ action: QueuedAction; at: number } | null> {
+  const queue = await read($, queueHere)
+  const key = await read($, queueFocus)
+  const found = key === null ? 0 : queue.findIndex((_, i) => queueRowKey(i) === key)
+  const at = found < 0 ? 0 : found
+  const action = queue[at]
+  return action === undefined ? null : { action, at }
+}
+
+/** Moves the list's ring onto row `i`. */
+async function focusQueueRow($: EngineInterface, i: number): Promise<void> {
+  const key = queueRowKey(i)
+  await update($, queueFocus, () => key)
+  try {
+    await $.ui.focus({ requestId: QUEUE_PANE, key })
+  } catch {
+    // the ring stays on the row it was on
+  }
+}
+
+/** An action taken from the list (Enter): the list closes and its words wait in the prompt box; sent, it leaves the queue. */
+async function takeQueued($: EngineInterface, id: string): Promise<void> {
+  const action = (await read($, queueHere)).find(candidate => candidate.id === id)
+  if (action === undefined) return
+  try {
+    await $.ui.close({ id: QUEUE_PANE })
+  } catch {
+    // already closed
+  }
+  await putInBox($, action.text, [])
+}
+
+/** t in the list: the action under the ring moves to the top, and the ring goes with it. */
+async function topFocused($: EngineInterface): Promise<void> {
+  const focused = await focusedAction($)
+  if (focused === null) return
+  await moveToTop($, focused.action.id)
+  await focusQueueRow($, 0)
+}
+
+/** x in the list: the action under the ring comes off unsent, and the ring stays on its place; the last one gone, the list closes. */
+async function dropFocused($: EngineInterface): Promise<void> {
+  const focused = await focusedAction($)
+  if (focused === null) return
+  await dropFromQueue($, focused.action.id)
+  const left = (await read($, queueHere)).length
+  if (left === 0) {
+    try {
+      await $.ui.close({ id: QUEUE_PANE })
+    } catch {
+      // already closed
+    }
+    return
+  }
+  await focusQueueRow($, Math.min(focused.at, left - 1))
 }
 
 /**
@@ -1157,9 +2335,211 @@ async function suggestSwitch($: EngineInterface, turn: FittedTurn, e: TurnStepIn
       at: await $.clock.now(),
     }
     await update($, routed, () => shown)
+    // A short turn may have ended before its grade came: its end line says what it ran on all the same.
+    const ended = endedTurns.get(e.turnId)
+    if (ended !== undefined) await noteEnd($, ended)
   } catch {
     // a suggestion is a bonus: the turn never hears of a failed one
   }
+}
+
+/**
+ * Remembers what the turn that just ended ran on, where a fit or a suggestion is shown for it, and what it cost, for its
+ * end line; a grade that lands later adds its words to the cost already there.
+ */
+async function noteEnd($: EngineInterface, durationMs: number, spend?: Spend): Promise<void> {
+  const fit = await read($, routed)
+  const words = fit === null ? undefined : fitWords(fit)
+  if (words === undefined && spend === undefined) return
+  await update($, endLines, lines => {
+    const prior = lines.find(line => line.durationMs === durationMs)
+    const line: EndLine = { durationMs, words: words ?? prior?.words, spend: spend ?? prior?.spend }
+    return [...lines.filter(other => other.durationMs !== durationMs), line].slice(-ENDS_KEPT)
+  })
+}
+
+/** The engine's figures as the meters keep them: the context's fill, and the week's rate-limit window. */
+export function meterOf(context: { tokens?: number; percent?: number }, rateLimits: readonly { kind: string; percentUsed: number; resetsAt?: string }[]): MeterReading {
+  const week = rateLimits.find(limit => limit.kind === WEEK_KIND)
+  return {
+    percent: context.percent ?? null,
+    tokens: context.tokens ?? null,
+    week: week === undefined ? null : { percent: week.percentUsed, resetsAt: week.resetsAt ?? null },
+  }
+}
+
+/** Keeps a reading for the footer and the tips, drawn again only where it changed. */
+async function keepMeter($: EngineInterface, reading: MeterReading): Promise<void> {
+  await update($, meter, current => (JSON.stringify(current) === JSON.stringify(reading) ? current : reading))
+}
+
+/** Takes the engine's figures afresh; the meters keep their last reading where it cannot answer. */
+async function loadMeter($: EngineInterface): Promise<void> {
+  try {
+    const usage = await $.session.usage()
+    await keepMeter($, meterOf(usage.context, usage.rateLimits))
+  } catch {
+    // the last reading stands
+  }
+}
+
+/** What the session has cost so far in dollars; null where the engine keeps no figure. */
+async function costSoFar($: EngineInterface): Promise<number | null> {
+  try {
+    return (await $.session.usage()).cost?.usd ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Tokens in a few characters: "128k", or the count under a thousand. */
+export function tokensShort(tokens: number): string {
+  return tokens < 1000 ? String(tokens) : `${Math.round(tokens / 1000)}k`
+}
+
+/** Dollars as the end line says them: "$0.04", or "<$0.01" for less than a cent. */
+export function usdShort(usd: number): string {
+  return usd < 0.01 ? '<$0.01' : `$${usd.toFixed(2)}`
+}
+
+/** How long until `resetsAt` from `now`, in its largest unit: "in 2 d", "in 5 h", "in 40 min"; null where unreadable or past. */
+export function resetsIn(resetsAt: string, now: number): string | null {
+  const ms = Date.parse(resetsAt) - now
+  if (!Number.isFinite(ms) || ms <= 0) return null
+  const minutes = Math.ceil(ms / 60_000)
+  if (minutes < 60) return `in ${minutes} min`
+  const hours = Math.round(minutes / 60)
+  return hours < 48 ? `in ${hours} h` : `in ${Math.round(hours / 24)} d`
+}
+
+/** One of the footer's meters: its key, its label, how much is used in whole percent, and what follows it, if anything. */
+export type Meter = { key: string; label: string; percent: number; after?: string }
+
+/** The footer's meters: the context's fill, and the week's usage with, once it is mostly used, when it resets. */
+export function metersOf(reading: MeterReading, now: number): Meter[] {
+  const meters: Meter[] = []
+  if (reading.percent !== null) meters.push({ key: 'ctxMeter', label: 'ctx', percent: reading.percent })
+  if (reading.week !== null) {
+    const resets = reading.week.percent >= WEEK_RESET_PERCENT && reading.week.resetsAt !== null ? resetsIn(reading.week.resetsAt, now) : null
+    meters.push({ key: 'weekMeter', label: 'week', percent: Math.round(reading.week.percent), ...(resets === null ? {} : { after: `resets ${resets}` }) })
+  }
+  return meters
+}
+
+/** A meter's colour, a key of the person's theme: success under NUDGE_PERCENT, warning under TOAST_PERCENT, then error. */
+export function meterColor(percent: number): 'success' | 'warning' | 'error' {
+  return percent >= TOAST_PERCENT ? 'error' : percent >= NUDGE_PERCENT ? 'warning' : 'success'
+}
+
+/** How many of a meter's cells are full: as near its percent as five cells come, one at least for anything used. */
+export function meterCells(percent: number): number {
+  return percent <= 0 ? 0 : Math.min(METER_CELLS, Math.max(1, Math.round((percent / 100) * METER_CELLS)))
+}
+
+/** An idle time picked in the settings, as the warning says it: "5 min", "1 h". */
+function idleLabel(minutes: string): string {
+  return minutes === '60' ? '1 h' : `${minutes} min`
+}
+
+/**
+ * What the line under the prompt says of the context, first of its tips: once the cache has likely gone cold, what the
+ * next message reads again at full price; else past NUDGE_PERCENT, what each message sends again and how to cut it.
+ * Empty where neither.
+ */
+export function contextTip(reading: MeterReading, current: Pick<Settings, 'meters' | 'coldAfter'>, isCold: boolean): string {
+  if (reading.tokens === null) return ''
+  const tokens = tokensShort(reading.tokens)
+  if (isCold && current.coldAfter !== OFF) {
+    return `idle ${idleLabel(current.coldAfter)}: the cache has likely expired, so your next message reads ${tokens} tokens again at full price`
+  }
+  if (current.meters && reading.percent !== null && reading.percent >= NUDGE_PERCENT) {
+    return `context ${reading.percent}%: each message sends ${tokens} tokens again · /compact keeps the gist, /clear starts fresh`
+  }
+  return ''
+}
+
+/** What a turn spent: its dollars, and the share of its input the cache served; null where the engine gave neither. */
+export function turnSpend(usd: number | null, usage: ModelUsage | undefined): Spend | null {
+  const input = usage === undefined ? 0 : usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+  // A first message, or one after the cache expired, reads nothing from the cache: it writes it, for the next to read.
+  const isWritten = usage !== undefined && usage.cache_read_input_tokens === 0 && usage.cache_creation_input_tokens > 0
+  const cache = usage === undefined || input === 0 ? null : isWritten ? 'written' : Math.round((usage.cache_read_input_tokens / input) * 100)
+  return usd === null && cache === null ? null : { usd: usd === null ? null : Math.max(0, usd), cache }
+}
+
+/** The cache share as the end line says it: "96% cached", "cache written"; null for none. */
+function cacheText(cache: Spend['cache']): string | null {
+  return cache === null ? null : cache === 'written' ? 'cache written' : `${cache}% cached`
+}
+
+/** The cache share's colour, a key of the person's theme: success when most came from the cache, warning, then error. */
+export function cacheColor(cache: number | 'written'): 'success' | 'warning' | 'error' {
+  return cache === 'written' ? 'warning' : cache >= CACHE_GOOD ? 'success' : cache >= CACHE_FAIR ? 'warning' : 'error'
+}
+
+/** What a turn spent as its end line says it: "$0.04 · 96% cached"; null where the engine gave no figure. */
+export function turnCost(usd: number | null, usage: ModelUsage | undefined): string | null {
+  const spend = turnSpend(usd, usage)
+  if (spend === null) return null
+  return [spend.usd === null ? null : usdShort(spend.usd), cacheText(spend.cache)].filter(part => part !== null).join(' · ')
+}
+
+/** Past TOAST_PERCENT, a toast once on what each message sends again, until the fill drops under NUDGE_PERCENT. */
+function toastFill($: EngineInterface, reading: MeterReading): void {
+  const percent = reading.percent ?? 0
+  if (percent < NUDGE_PERCENT) {
+    isFillToasted = false
+    return
+  }
+  if (percent < TOAST_PERCENT || isFillToasted || reading.tokens === null) return
+  isFillToasted = true
+  $.ui.toast(`Context ${percent}% full: each message sends ${tokensShort(reading.tokens)} tokens again. /compact keeps the gist, /clear starts fresh.`)
+}
+
+/**
+ * Past the fill the settings pick, with no answer running: /compact, once until the fill drops under it again, so a
+ * compaction that leaves the context past it does not run again and again.
+ */
+export async function compactPast($: EngineInterface, percent: number): Promise<void> {
+  const at = Number((await loadSettings($)).compactAt)
+  if (!Number.isFinite(at)) return
+  if (percent < at) {
+    isCompactArmed = true
+    return
+  }
+  if (!isCompactArmed || isCompacting || runningTurn !== undefined) return
+  isCompactArmed = false
+  isCompacting = true
+  $.ui.toast(`Context ${percent}% full: compacting, as /companion is set to.`)
+  try {
+    const result = await $.session.compact()
+    if ('skip' in result && typeof result.skip === 'string') $.ui.toast(`Not compacted: ${result.skip}`)
+  } catch (error) {
+    $.ui.toast(`Could not compact: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    isCompacting = false
+  }
+}
+
+/**
+ * Starts the wait for the cache to go cold, from an answer's end: none with the warning off, or for a conversation too
+ * small to warn of.
+ */
+async function watchCold($: EngineInterface): Promise<void> {
+  coldTimer?.cancel()
+  coldTimer = undefined
+  const minutes = Number(settings.coldAfter)
+  if (!Number.isFinite(minutes) || ((await read($, meter)).tokens ?? 0) < COLD_MIN_TOKENS) return
+  coldTimer = $.clock.after(minutes * 60_000, () => {
+    void update($, isColdNow, () => true)
+  })
+}
+
+/** A turn starts: the cache is warm again, and its wait starts over when the answer ends. */
+async function warmCache($: EngineInterface): Promise<void> {
+  coldTimer?.cancel()
+  coldTimer = undefined
+  await update($, isColdNow, () => false)
 }
 
 /** Shows in the band what a fitted turn runs on, or nothing when it runs as usual. */
@@ -1351,21 +2731,32 @@ export function quoteOf(text: string, max: number): string {
   return `> ${escapeMarkdown(oneLine(text, max))}`
 }
 
-/** What the line on a fitted turn needs to know of where it is drawn. */
-type FitRowOptions = { hasPrompt: boolean; isWorking: boolean; isTerminal: boolean; hasNumberKeys: boolean }
+/** A fitted turn in words, as its line says it: where its follow-ups go, what it runs on, or what it ran on. */
+export function fitWords(fit: RoutedTurn): string {
+  return fit.isOnward === true ? describeOnward(fit) : fit.isSuggestion ? describeSuggested(fit) : describeRouted(fit)
+}
+
+/**
+ * What the line on a fitted turn needs to know of where it is drawn. `isQuiet`: the terminal's band, where the turn's
+ * end line says what it ran on, so the band draws the line for its button, while the answer runs, or for words no end
+ * line says (`showsWords`, as where a task was just sent on), and its words only where `showsWords`.
+ */
+type FitRowOptions = { hasPrompt: boolean; isWorking: boolean; isTerminal: boolean; hasNumberKeys: boolean; isQuiet?: boolean; showsWords?: boolean }
 
 /**
  * What a turn runs on, quietly, with one button: the switch a suggestion offers (stopping the answer that is running,
  * or sending a finished task's follow-ups on), or once a fitted turn that ran on something else has ended, the redo that
  * asks the prompt again as usual; a task sent on shows where its follow-ups go, with nothing to press. A dim line and a
- * button on the terminal (0 presses it, with the number keys on), one dim markdown line with its link elsewhere.
+ * button on the terminal (0 presses it, with the number keys on), one dim markdown line with its link elsewhere. Null
+ * where a quiet band has nothing of it to draw.
  */
-function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, { hasPrompt, isWorking, isTerminal, hasNumberKeys }: FitRowOptions) {
+function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, { hasPrompt, isWorking, isTerminal, hasNumberKeys, isQuiet = false, showsWords = true }: FitRowOptions) {
   const { Box, Button, Markdown, Text } = ui
   const { isSuggestion } = fit
   const isOnward = fit.isOnward === true
   const hasButton = hasPrompt && !isOnward && (isSuggestion || (!isWorking && isMoved(fit)))
-  const words = isOnward ? describeOnward(fit) : isSuggestion ? describeSuggested(fit) : describeRouted(fit)
+  if (isQuiet && !hasButton && !isWorking && !showsWords) return null
+  const words = fitWords(fit)
   const label = isSuggestion ? switchLabel(fit, isWorking) : redoLabel(fit)
   const key = isSuggestion ? 'switch' : 'redo'
   const press = () => (isSuggestion ? switchToFit($) : redoAsUsual($))
@@ -1383,11 +2774,13 @@ function fitRow($: EngineInterface, ui: Parts, fit: RoutedTurn, { hasPrompt, isW
   }
   return (
     <Box key="fit" flexWrap="wrap" columnGap={2}>
-      <Box key="task" flexShrink={1}>
-        <Text dimColor wrap="truncate-end">
-          {words}
-        </Text>
-      </Box>
+      {(showsWords || !hasButton) && (
+        <Box key="task" flexShrink={1}>
+          <Text dimColor wrap="truncate-end">
+            {words}
+          </Text>
+        </Box>
+      )}
       {hasButton && hasNumberKeys && <Button key={key} label={label} plain hotkey="0" onPress={press} />}
       {hasButton && !hasNumberKeys && (
         <Button key={key} label={label} plain onPress={press}>
@@ -1432,30 +2825,49 @@ function choiceList($: EngineInterface, ui: Parts, choices: readonly string[], t
 }
 
 /**
- * The choices on the terminal, numbered as Claude Code's own surveys number their answers: with the number keys on, a
- * number typed into the empty prompt box picks one. A dim line under them says so, and where the settings are.
+ * The choices on the terminal, numbered as Claude Code's own surveys number their answers, one a line: with the number
+ * keys on, a number typed into the empty prompt box picks one. The hint line under the prompt box says so.
  */
 function numberedChoices($: EngineInterface, ui: Parts, choices: readonly string[], columns: number, current: Settings) {
-  const { Box, Button, Text } = ui
+  const { Box, Button } = ui
   const room = Math.max(10, columns - (current.numberKeys ? HOTKEY_COLUMNS : BUTTON_CHROME))
   return (
     <Box key="choices" flexDirection="column">
-      <Box key="list" flexWrap="wrap" columnGap={3}>
-        {choices.map((choice, i) =>
-          current.numberKeys ? (
-            <Button key={`choice-${i + 1}`} label={oneLine(choice, room)} plain hotkey={String(i + 1)} onPress={() => pressChoice($, choice, choices)} />
-          ) : (
-            <Button key={`choice-${i + 1}`} label={oneLine(choice, room)} onPress={() => pressChoice($, choice, choices)} />
-          ),
-        )}
-      </Box>
-      <Box key="hint">
-        <Text dimColor wrap="truncate-end">
-          {`${pickHint(current, choices.length)} · ${SETTINGS_HINT}`}
-        </Text>
-      </Box>
+      {choices.map((choice, i) =>
+        current.numberKeys ? (
+          <Button key={`choice-${i + 1}`} label={oneLine(choice, room)} plain hotkey={String(i + 1)} onPress={() => pressChoice($, choice, choices)} />
+        ) : (
+          <Button key={`choice-${i + 1}`} label={oneLine(choice, room)} onPress={() => pressChoice($, choice, choices)} />
+        ),
+      )}
     </Box>
   )
+}
+
+/** One of the band's keys on the terminal: a digit from the empty prompt box presses it, or with the number keys off, the band's focus. */
+function keyButton(ui: Parts, current: Settings, key: string, label: string, hotkey: string, press: () => Promise<unknown>) {
+  const { Button } = ui
+  return current.numberKeys ? <Button key={key} label={label} plain hotkey={hotkey} onPress={press} /> : <Button key={key} label={label} onPress={press} />
+}
+
+/**
+ * The terminal's keys: 7 copies Claude's last answer (once there is one), 8 opens the queue and 9 the notes. In the band,
+ * hidden, for the digits, or beside the last prompt for the band's focus; and under the prompt box, for the eye and a
+ * click.
+ */
+function bandKeys($: EngineInterface, ui: Parts, current: Settings, surface: RenderSurface, isAnswered: boolean) {
+  return [
+    isAnswered ? keyButton(ui, current, 'copyKey', COPY_LABEL, COPY_KEY, () => copyLastAnswer($, surface)) : null,
+    keyButton(ui, current, 'queueKey', QUEUE_BUTTON_LABEL, QUEUE_HOTKEY, () => pressQueueButton($)),
+    keyButton(ui, current, 'noteKey', NOTES_KEY_LABEL, NOTE_KEY, () => pressNotesKey($)),
+  ].filter(key => key !== null)
+}
+
+/** The columns the band's keys take on the last prompt's row: each one's number or brackets and label, and the gaps. */
+function keysColumns(current: Settings, isAnswered: boolean): number {
+  const labels = [isAnswered ? COPY_LABEL : null, QUEUE_BUTTON_LABEL, NOTES_KEY_LABEL].filter(label => label !== null)
+  const chrome = current.numberKeys ? HOTKEY_COLUMNS : BUTTON_CHROME
+  return labels.reduce((sum, label) => sum + chrome + label.length, 0) + KEYS_GAP * labels.length
 }
 
 /** How the terminal picks a choice from the keys: its number, or with the number keys off, the band's focus. */
@@ -1497,7 +2909,14 @@ const ROUTE_ROWS: readonly MenuRow[] = [
   { field: 'grading', label: 'Grading', options: GRADINGS, about: 'Two calls keep the harder of two grades, for twice the grading cost.' },
 ]
 const PROMPT_ROWS: readonly MenuRow[] = [{ field: 'lastPrompt', label: 'In VS Code', options: ON_OFF, about: PROMPT_NOTE }]
-const MENU: readonly MenuRow[] = [...SUGGEST_ROWS, ...ROUTE_ROWS, ...PROMPT_ROWS]
+const NOTE_ROWS: readonly MenuRow[] = [{ field: 'noteButton', label: 'Copy, queue, notes keys', options: ON_OFF, about: NOTE_BUTTON_NOTE }]
+const METER_ROWS: readonly MenuRow[] = [
+  { field: 'meters', label: 'Meters', options: ON_OFF, about: METERS_NOTE },
+  { field: 'coldAfter', label: 'Cold cache warning', options: COLD_AFTERS, about: COLD_NOTE },
+  { field: 'compactAt', label: 'Auto-compact', options: COMPACT_ATS, about: COMPACT_NOTE },
+  { field: 'doneAfter', label: 'Done alert', options: DONE_AFTERS, about: DONE_NOTE },
+]
+const MENU: readonly MenuRow[] = [...SUGGEST_ROWS, ...ROUTE_ROWS, ...PROMPT_ROWS, ...NOTE_ROWS, ...METER_ROWS]
 
 /** A setting's value as its picker holds it: booleans as on or off, the number of choices as text. */
 function pickerValue(current: Settings, field: keyof Settings): string {
@@ -1601,6 +3020,14 @@ function settingsMenu($: EngineInterface, ui: Parts, current: Settings, view: st
       <Box key="promptRows" flexDirection="column" paddingLeft={2}>
         {PROMPT_ROWS.map(row => rowButton(row, false))}
       </Box>
+      <Text weight="semibold">Notes</Text>
+      <Box key="noteRows" flexDirection="column" paddingLeft={2}>
+        {NOTE_ROWS.map(row => rowButton(row, false))}
+      </Box>
+      <Text weight="semibold">Meters and alerts</Text>
+      <Box key="meterRows" flexDirection="column" paddingLeft={2}>
+        {METER_ROWS.map(row => rowButton(row, false))}
+      </Box>
     </Box>
   )
 }
@@ -1633,6 +3060,233 @@ function optionList($: EngineInterface, ui: Parts, current: Settings, row: MenuR
   )
 }
 
+/** After /clear: the settings, the project's queue and notes, the keys, the setup and the meters read again. */
+async function reloadAfterClear($: EngineInterface): Promise<void> {
+  await loadSettings($)
+  await loadQueue($)
+  await loadNotes($)
+  await loadBoundKeys($)
+  await loadSetupDone($)
+  await loadMeter($)
+}
+
+/** A turn's length as the alert says it: "45s", "2m 4s". */
+export function durationText(ms: number): string {
+  const seconds = Math.round(ms / 1000)
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+/**
+ * Once an answer that ran past the time the settings pick ends: a notification through the person's own channel; on
+ * Windows, where the terminal has none, the system's notify sound. Notifications the person switched off stay off.
+ */
+export async function alertDone($: EngineInterface, durationMs: number, answer: string): Promise<void> {
+  const after = Number(settings.doneAfter)
+  if (!Number.isFinite(after) || durationMs < after * 1000) return
+  try {
+    const sent = await $.ui.notify(`Done after ${durationText(durationMs)}: ${oneLine(answer, DONE_TEXT_CHARS)}`, { title: DONE_TITLE })
+    if (sent.isSent || sent.reason !== 'no-channel') return
+  } catch {
+    return // a hook refused it, or the write failed
+  }
+  if ((await $.env.get('OS')) !== 'Windows_NT') return
+  try {
+    await $.process.run([...WINDOWS_DING], { timeoutMs: DING_TIMEOUT_MS })
+  } catch {
+    // no sound: PowerShell would not start
+  }
+}
+
+/** The file a tool call names, as its input gives it; null for none. */
+function fileOf(input: Record<string, unknown>): string | null {
+  const path = input.file_path ?? input.notebook_path ?? input.path
+  return typeof path === 'string' && path.length > 0 ? path : null
+}
+
+/** A path as Companion names it: relative to the session's folder where it lies under it, with forward slashes. */
+export function shortPath(path: string, root: string): string {
+  const slashed = path.replace(/\\/g, '/')
+  const base = root.replace(/\\/g, '/').replace(/\/$/, '')
+  return base.length > 0 && slashed.toLowerCase().startsWith(`${base.toLowerCase()}/`) ? slashed.slice(base.length + 1) : slashed
+}
+
+/** The files the conversation changed, each once where it was last changed, the latest last. */
+export function filesChanged(messages: readonly SessionMessage[], root: string): string[] {
+  const files: string[] = []
+  for (const message of messages) {
+    for (const use of message.toolUses) {
+      const file = EDIT_TOOLS.has(use.tool) ? fileOf(use.input) : null
+      if (file === null) continue
+      const short = shortPath(file, root)
+      if (files.includes(short)) files.splice(files.indexOf(short), 1)
+      files.push(short)
+    }
+  }
+  return files.slice(-HANDOFF_FILES)
+}
+
+/** The end of the conversation as the handoff's model reads it: each message's words, as many of the latest as fit. */
+export function handoffDigest(messages: readonly SessionMessage[]): string {
+  const lines: string[] = []
+  let room = HANDOFF_DIGEST_CHARS
+  for (const message of [...messages].reverse()) {
+    const text = oneLine(message.text, HANDOFF_MESSAGE_CHARS)
+    if (text.length === 0) continue
+    const line = `${message.role === 'user' ? 'Person' : 'Claude'}: ${text}`
+    if (line.length > room) break
+    lines.unshift(line)
+    room -= line.length
+  }
+  return lines.join('\n\n')
+}
+
+/** The note the fresh conversation starts from: the lead, the model's four lines, and the files changed. */
+export function handoffText(written: string, files: readonly string[]): string {
+  const body = written.trim().replace(/\n{2,}/g, '\n')
+  return [HANDOFF_LEAD, body, files.length === 0 ? '' : `Files changed: ${files.join(', ')}`].filter(part => part.length > 0).join('\n')
+}
+
+/** The handoff where the prompt box would not take it: copied for a paste, else in a toast. */
+async function copyHandoff($: EngineInterface, handoff: string): Promise<void> {
+  const [surface] = await $.session.surfaces()
+  const isCopied = surface !== undefined && (await $.ui.copy({ text: handoff, surface })).isCopied
+  $.ui.toast(isCopied ? 'Cleared. The handoff is copied: paste it into the prompt box.' : `Cleared. The handoff: ${handoff}`)
+}
+
+/**
+ * /fresh: a handoff written from the conversation, /clear, and the handoff in the prompt box to edit or send. Nothing
+ * is cleared where the handoff could not be written, and nothing starts while an answer runs.
+ */
+export async function startFresh($: EngineInterface): Promise<void> {
+  if (runningTurn !== undefined) {
+    $.ui.toast('An answer is still running: /fresh once it ends.')
+    return
+  }
+  const messages = await $.session.messages()
+  const digest = handoffDigest(messages)
+  if (digest.length === 0) {
+    $.ui.toast('Nothing to hand over yet: this conversation is empty.')
+    return
+  }
+  let written = ''
+  try {
+    const answer = await $.model.complete({
+      model: settings.model,
+      system: HANDOFF_SYSTEM,
+      prompt: digest,
+      maxTokens: HANDOFF_MAX_TOKENS,
+      effort: 'low',
+      timeoutMs: HANDOFF_TIMEOUT_MS,
+    })
+    written = answer.isAnswered ? answer.text : ''
+  } catch {
+    written = '' // a request the engine refuses to send
+  }
+  if (written.trim().length === 0) {
+    $.ui.toast('Could not write the handoff, so nothing was cleared.')
+    return
+  }
+  const handoff = handoffText(written, filesChanged(messages, await projectRoot($)))
+  try {
+    await $.command.run({ command: 'clear', args: '' })
+  } catch {
+    await copyHandoff($, handoff)
+    $.ui.toast('Could not clear the conversation: type /clear, then paste the handoff, which is copied.')
+    return
+  }
+  const filled = await $.prompt.fill({ text: handoff, mode: 'replace' })
+  if (filled.isFilled) {
+    $.ui.toast('Cleared. The handoff is in the prompt box: edit it, or press Enter.')
+    return
+  }
+  await copyHandoff($, handoff)
+}
+
+/** A tool call as the X-ray names it: the tool and its file or command, "Read parser.ts", "Bash npm test". */
+function callLabel(use: ToolUseSummary, root: string): string {
+  const file = fileOf(use.input)
+  const command = typeof use.input.command === 'string' ? oneLine(use.input.command, 30) : null
+  const what = file !== null ? xrayPath(file, root) : command
+  return what === null || what.length === 0 ? use.tool : `${use.tool} ${what}`
+}
+
+/** A path as the X-ray names it: relative to the session's folder where it lies under it, else its last two parts. */
+export function xrayPath(path: string, root: string): string {
+  const short = shortPath(path, root)
+  return short.includes(':') || short.startsWith('/') ? short.split('/').slice(-2).join('/') : short
+}
+
+/** The biggest tool outputs still in the conversation, by their stored text, in tokens estimated from it. */
+export function biggestOutputs(messages: readonly SessionMessage[], root: string): XrayPart[] {
+  return messages
+    .flatMap(message => message.toolUses)
+    .filter(use => (use.text ?? '').length > 0)
+    .map(use => ({ label: callLabel(use, root), tokens: Math.round((use.text ?? '').length / CHARS_PER_TOKEN) }))
+    .filter(part => part.tokens >= XRAY_MIN_OUTPUT)
+    .sort((a, b) => b.tokens - a.tokens)
+    .slice(0, XRAY_PARTS)
+}
+
+/** What to cut first: the MCP tool lists, the memory files or the conversation, where one weighs; else nothing yet. */
+export function xrayTip({ window, percent, mcp, memory, biggestMemory }: { window: number; percent: number; mcp: number; memory: number; biggestMemory?: string }): string {
+  if (mcp >= window * MCP_HEAVY) return `MCP tool lists take ${tokensShort(mcp)} of every message: turn off the servers you do not use in /mcp.`
+  if (memory >= window * MEMORY_HEAVY && biggestMemory !== undefined) {
+    return `Memory files take ${tokensShort(memory)} of every message: trim the biggest, ${biggestMemory}.`
+  }
+  if (percent >= CONVERSATION_HEAVY) return 'Most of it is the conversation: /compact keeps the gist, /fresh starts over with a handoff.'
+  return 'Plenty of room: nothing to cut yet.'
+}
+
+/** The X-ray of a breakdown: its rows, the biggest outputs, the MCP servers and memory files, and the tip. */
+export function xrayOf(breakdown: SessionContextBreakdown, messages: readonly SessionMessage[], root: string): XrayView {
+  const biggestFirst = (a: XrayPart, b: XrayPart) => b.tokens - a.tokens
+  const sum = (parts: readonly XrayPart[]) => parts.reduce((total, part) => total + part.tokens, 0)
+  const byServer = new Map<string, number>()
+  for (const tool of breakdown.mcpTools) {
+    if (tool.isLoaded) byServer.set(tool.serverName, (byServer.get(tool.serverName) ?? 0) + tool.tokens)
+  }
+  const servers = [...byServer].map(([label, tokens]) => ({ label, tokens })).sort(biggestFirst)
+  const memory = breakdown.memoryFiles.map(file => ({ label: xrayPath(file.path, root), tokens: file.tokens })).sort(biggestFirst)
+  const percent = Math.round(breakdown.percentage)
+  const window = breakdown.rawMaxTokens
+  return {
+    tokens: breakdown.totalTokens,
+    window,
+    percent,
+    rows: breakdown.categories
+      .filter(category => !category.isDeferred && category.tokens > 0)
+      .map(category => ({ name: category.name, tokens: category.tokens, color: category.color, isUsed: category.kind === 'used' })),
+    outputs: biggestOutputs(messages, root),
+    servers: servers.slice(0, XRAY_PARTS),
+    memory: memory.slice(0, XRAY_PARTS),
+    tip: xrayTip({ window, percent, mcp: sum(servers), memory: sum(memory), ...(memory[0] === undefined ? {} : { biggestMemory: memory[0].label }) }),
+  }
+}
+
+/** How many of a row's ten cells are full: its share of the window, one at least for anything in it. */
+export function xrayCells(tokens: number, window: number): number {
+  return tokens <= 0 || window <= 0 ? 0 : Math.min(XRAY_CELLS, Math.max(1, Math.round((tokens / window) * XRAY_CELLS)))
+}
+
+/** A list of the X-ray's parts in a line: "Read parser.ts 12k · Bash npm test 8k". */
+function partsText(parts: readonly XrayPart[]): string {
+  return parts.map(part => `${part.label} ${tokensShort(part.tokens)}`).join(' · ')
+}
+
+/** The X-ray as text, where no pane is placed: its fill, a line per row, the lists and the tip. */
+export function xrayText(view: XrayView): string {
+  return [
+    `${XRAY_TITLE}: ${tokensShort(view.tokens)} of ${tokensShort(view.window)} (${view.percent}%)`,
+    ...view.rows.map(row => `${row.name}: ${tokensShort(row.tokens)}`),
+    view.outputs.length === 0 ? '' : `Biggest tool outputs: ${partsText(view.outputs)}`,
+    view.servers.length === 0 ? '' : `MCP servers: ${partsText(view.servers)}`,
+    view.memory.length === 0 ? '' : `Memory files: ${partsText(view.memory)}`,
+    view.tip,
+  ]
+    .filter(line => line.length > 0)
+    .join('\n')
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await loadSettings($)
@@ -1649,8 +3303,158 @@ export const register: Register = on => {
       description: 'Copy a suggested next message to the clipboard (the first, or the one numbered)',
       argumentHint: '[1-5]',
     })
+    await $.command.register({
+      name: 'note',
+      description: 'Keep a message for later in this project, or with nothing after it open the notes',
+      argumentHint: '[text to keep]',
+    })
+    await $.command.register({
+      name: 'notes',
+      description: 'Open the notes kept for this project; "clear" drops them all, "export" writes them to NOTES.md',
+      argumentHint: '[clear | export [file]]',
+    })
+    await $.command.register({
+      name: 'save-next',
+      description: 'Keep a suggested next message as a note (the first, or the one numbered)',
+      argumentHint: '[1-5]',
+    })
+    await $.command.register({
+      name: 'queue',
+      description: 'Queue what you copied from an answer, or the text after it; "list" prints the queue, "clear" empties it',
+      argumentHint: '[text | list | clear]',
+    })
+    await $.command.register({
+      name: 'companion-setup',
+      description: 'Set Companion up: fullscreen for clicking, and Alt+Q and Alt+N to queue or keep what you copied',
+    })
+    await $.command.register({
+      name: 'fresh',
+      description: 'Start over to save tokens: a short handoff of the task is written, the conversation cleared, and the handoff put in the prompt box',
+    })
+    await $.command.register({ name: 'ctx', description: 'Context X-ray: what fills the context window, and what to cut first' })
+    // What the band draws from the start: the project's queue and notes, the keys bound to /queue and /note, and
+    // whether the setup was opened yet.
+    await loadQueue($)
+    await loadNotes($)
+    await loadBoundKeys($)
+    await loadSetupDone($)
+    await loadMeter($)
 
     return next(e)
+  })
+
+  on('session.measure', async ($, e, next) => {
+    const result = await next(e)
+    // The engine measured the session after a turn, or a rate-limit window moved: the meters read it.
+    const reading = meterOf(e.context, e.rateLimits)
+    await keepMeter($, reading)
+    const current = await loadSettings($)
+    if (current.meters) toastFill($, reading)
+    // A compaction waits for this hook to end: it is a request of its own.
+    const percent = reading.percent
+    if (percent !== null && current.compactAt !== OFF) {
+      $.clock.after(1, () => {
+        void compactPast($, percent)
+      })
+    }
+    return result
+  }).catch(($, e, next) => next(e))
+
+  on('command.run', { command: 'note' }, async ($, e) => {
+    const text = e.args.trim()
+    if (text.length > 0) {
+      const kept = await addNote($, text)
+      return { text: keptLine(kept, (await loadNotes($)).length) }
+    }
+
+    // On its own: what the person selected or copied from an answer, else the last answer's lines, else the notes.
+    const said = (await keepSelection($)) ?? (await keepCopy($))
+    if (said !== null) return { text: said }
+    const latest = (await read($, answersDone)).at(-1)
+    if (latest !== undefined && (await openPicker($, latest))) return { text: 'Pick the lines to keep from the last answer.' }
+    return showNotes($)
+  })
+
+  on('session.end', async ($, e, next) => {
+    const result = await next(e)
+    if (e.reason === 'clear') {
+      $.clock.after(CLEAR_RELOAD_MS, () => {
+        void reloadAfterClear($)
+      })
+    }
+    return result
+  }).catch(($, e, next) => next(e))
+
+  on('command.run', { command: 'fresh' }, async $ => {
+    // The handoff is written, and the conversation cleared, once this command's row is in: /clear waits on no hook.
+    $.clock.after(1, () => {
+      void startFresh($)
+    })
+    return { text: 'Writing a handoff, then starting fresh.' }
+  })
+
+  on('command.run', { command: 'ctx' }, async ($, e) => {
+    const columns = e.presentation?.columns
+    const usage = await $.session.usage({ breakdown: 'summary', ...(columns === undefined ? {} : { columns }) })
+    const breakdown = usage.context.breakdown
+    if (breakdown === undefined) return { text: 'No measure of the context yet: send a message first.' }
+    const view = xrayOf(breakdown, await $.session.messages(), await projectRoot($))
+    await update($, xrayView, () => view)
+    const opened = await $.ui.open({ id: XRAY_PANE, title: XRAY_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: view.rows.length + XRAY_CHROME })
+    return { text: opened.isPlaced ? 'Context X-ray opened.' : xrayText(view) }
+  })
+
+  on('command.run', { command: 'companion-setup' }, async ($, e) => {
+    // Fullscreen and the Alt keys are the CLI's: where no terminal draws, there is nothing to set up.
+    if (!(await $.session.surfaces()).includes('terminal')) {
+      return { text: 'Companion’s setup is for the Claude Code CLI in a terminal, where fullscreen and the Alt keys live.' }
+    }
+    if (await openSetup($, e.presentation?.isFullscreen === true)) return { text: 'Companion setup opened.' }
+    return { text: 'Companion setup: run /tui fullscreen for clicking, and bind keys to /queue and /note in ~/.claude/keybindings.json.' }
+  })
+
+  on('command.run', { command: 'notes' }, async ($, e) => {
+    const [word = '', ...rest] = e.args.trim().split(/\s+/)
+    if (word.toLowerCase() === 'export') return { text: await exportNotes($, rest.join(' ')) }
+    if (e.args.trim().toLowerCase() === 'clear') {
+      const count = (await loadNotes($)).length
+      if (count === 0) return { text: 'No notes to clear.' }
+      // Asked in the pane first; where none draws, the command itself was the ask.
+      await askClear($)
+      if (await openNotes($)) return { text: `Clear all ${count} ${count === 1 ? 'note' : 'notes'}? Answer in the Notes pane.` }
+      const dropped = await dropNotes($)
+      return { text: `Cleared ${dropped} ${dropped === 1 ? 'note' : 'notes'} for this project.` }
+    }
+    return showNotes($)
+  })
+
+  on('command.run', { command: 'queue' }, async ($, e) => {
+    const text = e.args.trim()
+    const word = text.toLowerCase()
+    if (word === 'clear') {
+      const dropped = await clearQueue($)
+      if (dropped === 0) return { text: 'Nothing queued to clear.' }
+      return { text: `Took ${dropped} ${dropped === 1 ? 'action' : 'actions'} off the queue.` }
+    }
+    if (word === 'list') return { text: queueLines(await loadQueue($), queueEmpty(await loadBoundKeys($))) }
+    if (text.length > 0) {
+      const queuing = await addToQueue($, text)
+      return { text: queuedLine(queuing, (await read($, queueHere)).length) }
+    }
+    // On its own, and so as a key bound to it (Alt+Q): what was copied from an answer, queued.
+    return { text: await queueTheCopy($) }
+  })
+
+  on('command.run', { command: 'save-next' }, async ($, e) => {
+    const idea = await read($, suggested)
+    if (idea === null) return { text: 'No suggestion yet: they come with the next answer.' }
+
+    const asked = e.args.trim()
+    const number = asked.length === 0 ? 1 : Number(asked)
+    const choice = Number.isInteger(number) ? idea.choices[number - 1] : undefined
+    if (choice === undefined) return { text: `Pick 1 to ${idea.choices.length}. ${NEXT_LABEL}${numbered(idea.choices)}` }
+
+    return { text: keptLine(await addNote($, choice), (await loadNotes($)).length) }
   })
 
   on('command.run', { command: 'companion' }, async $ => {
@@ -1713,6 +3517,8 @@ export const register: Register = on => {
       const isProgram = e.origin.kind === 'sdk' && (await $.session.surfaces()).length === 0
       await noteTask($, text, e.command !== undefined || isProgram)
       await recordPrompt($, text, e.origin.kind === 'sdk')
+      // A queued action sent, as Tab took it from the box: it leaves the queue.
+      if (e.command === undefined) await sentFromQueue($, text)
     }
 
     return result
@@ -1722,6 +3528,10 @@ export const register: Register = on => {
     // The main loop's turns take their task from the prompt that started them; a subagent's are its own.
     if (e.agentId === undefined) {
       const current = await loadSettings($)
+      // The turn's cost is what it adds to the session's; and a turn warms the cache again.
+      const usd = current.meters ? await costSoFar($) : null
+      if (usd !== null) costAtStart.set(e.turnId, usd)
+      await warmCache($)
       // The mode kept for the session's model: /model, or a switch pressed, may have changed it since the last turn.
       const fit = fitFor(current, await noteSessionModel($))
       startTurn(
@@ -1749,19 +3559,50 @@ export const register: Register = on => {
     fitted.delete(e.turnId)
     const hasMovedOn = movedOn.delete(e.turnId)
     if (e.agentId === undefined && runningTurn === e.turnId) runningTurn = undefined
+    // A main-loop turn that ran fitted, or with a switch suggested, says so on the line that ends it.
+    if (e.agentId === undefined) {
+      endedTurns.set(e.turnId, e.durationMs)
+      for (const id of [...endedTurns.keys()].slice(0, -ENDS_KEPT)) endedTurns.delete(id)
+      // With the meters on, what the turn cost: what it added to the session's total, and its share read from the cache.
+      const start = costAtStart.get(e.turnId)
+      costAtStart.delete(e.turnId)
+      const now = settings.meters && start !== undefined ? await costSoFar($) : null
+      const spend = settings.meters ? turnSpend(now === null || start === undefined ? null : now - start, e.usage) : null
+      await noteEnd($, e.durationMs, spend ?? undefined)
+      // The cache's wait for going cold starts at the answer's end, on the conversation's size as measured now.
+      await loadMeter($)
+      await watchCold($)
+    }
     // Main-thread turns that answered: a subagent's report, an interrupted turn or a refusal suggests nothing.
     if (e.agentId !== undefined || e.reason !== 'answer' || e.answer.trim().length === 0) return result
+    // A long answer's end raises the alert, off the turn so its end never waits on the notification.
+    const { durationMs, answer: done } = e
+    $.clock.after(1, () => {
+      void alertDone($, durationMs, done)
+    })
 
     lastReply = e.answer
+    const answer = e.answer
+    await update($, answersDone, done => [...done, answer].slice(-ANSWERS_KEPT))
     const current = await loadSettings($)
     const ask = epoch
     const prompt = await read($, last)
+    // Read afresh: another session in the project may have queued or sent one meanwhile, and the keybindings file may
+    // have a key for /queue or /note since.
+    const queue = await loadQueue($)
+    await loadBoundKeys($)
 
     if ((await $.session.surfaces()).length > 0) {
       // The band or the pane shows them: asked on a timer, so the end of the turn never waits on the model.
       if (current.suggest && !hasMovedOn) {
         $.clock.after(1, () => {
           void suggestNext($, ask, prompt?.text ?? '', e.answer)
+        })
+      }
+      // The next queued action is the person's own next step: the prompt box offers it at once, for Tab to take.
+      if (queue.length > 0 && !hasMovedOn) {
+        $.clock.after(1, () => {
+          void offerNext($)
         })
       }
       return result
@@ -1780,10 +3621,11 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('prompt.suggest', async ($, e, next) => {
-    // The engine's own guess after a turn: the box shows this mod's likeliest choice instead, so the two agree.
+    // The engine's own guess after a turn: the box shows the next queued action instead, the person's own next step,
+    // else this mod's likeliest choice, so the two agree.
     if (e.origin.kind === 'suggestion') {
-      const likeliest = (await read($, suggested))?.choices[0]
-      if (likeliest !== undefined) return next({ ...e, text: likeliest })
+      const offer = (await read($, queueHere))[0]?.text ?? (await read($, suggested))?.choices[0]
+      if (offer !== undefined) return next({ ...e, text: offer })
     }
 
     return next(e)
@@ -1804,6 +3646,16 @@ export const register: Register = on => {
     if (!('deny' in result && result.deny !== undefined) && e.element !== undefined) {
       const landed = e.element
       await update($, menuFocus, () => landed)
+    }
+    return result
+  }).catch(($, e, next) => next(e)) // nor the ring
+
+  on('ui.focus', { requestId: QUEUE_PANE }, async ($, e, next) => {
+    // The queue list's ring moved: t and x act on the row it landed on.
+    const result = await next(e)
+    if (!('deny' in result && result.deny !== undefined) && e.element !== undefined && e.element.startsWith('queued-')) {
+      const landed = e.element
+      await update($, queueFocus, () => landed)
     }
     return result
   }).catch(($, e, next) => next(e)) // nor the ring
@@ -1835,36 +3687,81 @@ export const register: Register = on => {
     const isTerminal = e.surface === 'terminal'
     const current = await shownSettings($)
     const showsPrompt = prompt !== null && (isTerminal || current.lastPrompt)
-    if (e.props.hasSurvey || (!showsPrompt && idea === null && fit === null)) return next(e)
+    // The queue on the terminal alone, where 8 fills it and the prompt box offers its next action for Tab.
+    const queue = isTerminal ? await read($, queueHere) : []
+    if (e.props.hasSurvey || (!showsPrompt && idea === null && fit === null && queue.length === 0)) return next(e)
 
     const ui = $.ui.resolve(e)
     const { Box, Button, Markdown, Text } = ui
+    // The terminal's band is kept quiet: the last prompt and the choices, little else. The lines under the prompt box
+    // show the keys and say how to work them, the footer counts the queue and the notes, and each turn's end line says
+    // what it ran on.
+    // The terminal's "Copy answer", "View queue" and "View notes", once an answer is in to copy from or something waits
+    // in the queue or the notes; "Copy answer" first, once there is an answer to copy. A digit typed into the empty
+    // prompt box presses a band's button alone, so with the number keys on they stay here, hidden, and show under the
+    // prompt box; with them off, the band's focus has to reach them, so they show here, beside the last prompt.
+    const isAnswered = (await read($, answersDone)).length > 0
+    const hasKept = isAnswered || queue.length > 0 || (await read($, notesHere)).length > 0
+    const hasKeys = isTerminal && current.noteButton && hasKept
+    const keys = hasKeys ? bandKeys($, ui, current, e.surface, isAnswered) : []
+    const showsKeys = keys.length > 0 && !current.numberKeys
     // The terminal's columns are exact, so its lines are cut to fit. VS Code and the apps lay text out in their own
     // font, where the columns they report undercount the room (VS Code 2.1.300 said 42 for a band twice that wide),
     // so there the texts go whole and wrap, as markdown: the last prompt a quote, the choices rows of links.
-    const lastRoom = isTerminal ? Math.max(10, e.props.bodyColumns - QUOTE_COLUMNS - MORE_COLUMNS) : LAST_MAX_CHARS
+    const keysRoom = showsKeys ? keysColumns(current, isAnswered) : 0
+    const lastRoom = isTerminal ? Math.max(10, e.props.bodyColumns - QUOTE_COLUMNS - MORE_COLUMNS - keysRoom) : LAST_MAX_CHARS
     const more = <Button key="settings" label={MORE} plain dimColor onPress={() => openSettings($)} />
+    // Once a fitted turn has ended, its end line says what it ran on, so the band keeps only the button.
+    const ended = (await read($, endLines)).at(-1)
     const fitLine =
-      fit !== null && fitRow($, ui, fit, { hasPrompt: prompt !== null, isWorking: e.props.isWorking, isTerminal, hasNumberKeys: isTerminal && current.numberKeys })
-    // Without the quote, the ⋯ ends the band's first row: the model line, or else the "Suggested" label.
-    const moreOnFit = !showsPrompt && fit !== null
+      fit === null
+        ? null
+        : fitRow($, ui, fit, {
+            hasPrompt: prompt !== null,
+            isWorking: e.props.isWorking,
+            isTerminal,
+            hasNumberKeys: isTerminal && current.numberKeys,
+            isQuiet: isTerminal,
+            showsWords: !isTerminal || e.props.isWorking || ended?.words !== fitWords(fit),
+          })
+    const hasHead = showsPrompt || showsKeys
+    if (!hasHead && fitLine === null && idea === null && keys.length === 0) return next(e)
+    // Without the quote or the keys, the ⋯ ends the band's first row: the model line, or else the "Suggested" label.
+    const moreOnFit = !hasHead && fitLine !== null
+    // The last prompt's row: on the terminal the band's last, right over the prompt box, the model line and the choices
+    // above it; elsewhere its first, as VS Code pins the prompt above its answer.
+    const head = hasHead && (
+      <Box key="firstRow" flexWrap="nowrap" columnGap={1}>
+        {/* A bar of its own, not a quote border: the terminal draws that border a row above and below the text, two
+            rows the band can spare. */}
+        {showsPrompt && prompt !== null && isTerminal && (
+          <Box key="quoteBar" flexShrink={0}>
+            <Text color={QUOTE_COLOR}>{QUOTE_BAR}</Text>
+          </Box>
+        )}
+        {showsPrompt && prompt !== null && isTerminal && (
+          <Box key="prompt" flexGrow={1} flexShrink={1}>
+            <Text wrap="truncate-end">{oneLine(prompt.text, lastRoom)}</Text>
+          </Box>
+        )}
+        {showsPrompt && prompt !== null && !isTerminal && (
+          <Box key="prompt" flexGrow={1} flexShrink={1}>
+            <Markdown text={quoteOf(prompt.text, lastRoom)} />
+          </Box>
+        )}
+        {!showsPrompt && <Box key="space" flexGrow={1} />}
+        {showsKeys && (
+          <Box key="keys" flexShrink={0} columnGap={KEYS_GAP}>
+            {keys}
+          </Box>
+        )}
+        {more}
+      </Box>
+    )
 
     return (
       <Box flexDirection="column" rowGap="xs">
-        {showsPrompt && prompt !== null && (
-          <Box flexWrap="nowrap" columnGap={1}>
-            {isTerminal ? (
-              <Box key="prompt" flexGrow={1} flexShrink={1} borderStyle="quote" borderColor={QUOTE_COLOR} paddingLeft={1}>
-                <Text wrap="truncate-end">{oneLine(prompt.text, lastRoom)}</Text>
-              </Box>
-            ) : (
-              <Box key="prompt" flexGrow={1} flexShrink={1}>
-                <Markdown text={quoteOf(prompt.text, lastRoom)} />
-              </Box>
-            )}
-            {more}
-          </Box>
-        )}
+        {!isTerminal && head}
         {moreOnFit ? (
           <Box key="fitHead" flexWrap="nowrap" columnGap={1}>
             <Box key="fitText" flexGrow={1} flexShrink={1}>
@@ -1876,10 +3773,114 @@ export const register: Register = on => {
           fitLine
         )}
         {idea !== null && isTerminal && numberedChoices($, ui, idea.choices, e.props.bodyColumns, current)}
-        {idea !== null && !isTerminal && choiceList($, ui, idea.choices, showsPrompt || moreOnFit ? null : more)}
+        {idea !== null && !isTerminal && choiceList($, ui, idea.choices, hasHead || moreOnFit ? null : more)}
+        {isTerminal && head}
+        {keys.length > 0 && !showsKeys && (
+          <Box key="keyPresses" display="none">
+            {keys}
+          </Box>
+        )}
       </Box>
     )
   })
+
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    // On the terminal, a line of Companion's own under the engine's hint line, so neither cuts the other short. It stays
+    // while the person types and while an answer runs, so the prompt box never jumps a row; only the pick goes while
+    // typing, when a digit types itself.
+    if (e.surface !== 'terminal') return next(e)
+    if (e.viewport !== undefined) terminalColumns = e.viewport.columns
+    const current = await shownSettings($)
+    const idea = await read($, suggested)
+    const keys = await read($, boundKeys)
+    const queue = await read($, queueHere)
+    const isAnswered = (await read($, answersDone)).length > 0
+    const hasKept = isAnswered || queue.length > 0 || (await read($, notesHere)).length > 0
+    // The keys under the hint line, as the band holds them hidden for the digits; a click presses one in fullscreen.
+    const keyRow = current.noteButton && current.numberKeys && hasKept ? bandKeys($, $.ui.resolve(e), current, e.surface, isAnswered) : []
+    // The invitation to /companion-setup: until the setup was opened once, unless there is nothing left for it to do
+    // (both keys bound, and fullscreen on).
+    const isSetUp = (await read($, setupDone)) || (keys.queue !== null && keys.note !== null && e.viewport?.isFullscreen === true)
+    const context = contextTip(await read($, meter), current, await read($, isColdNow))
+    const tips = tipLines(current, { context, choices: e.props.isDraft ? 0 : (idea?.choices.length ?? 0), hasKept, isSetUp, keys })
+    const drawn = await next(e)
+    // The meters, on a line of their own at the bottom: the context's fill, and the week's usage.
+    const meters = current.meters ? metersOf(await read($, meter), await $.clock.now()) : []
+    if (tips.length === 0 && keyRow.length === 0 && meters.length === 0) return drawn
+    // The footer's labels sit at the right of the hint lines' first row while the lines leave them room; a tip line
+    // wider would push them down a row of their own, so each wraps short of them.
+    const columns = e.viewport?.columns
+    const labels = (await countsOf($, current)).join(LABELS_JOIN)
+    const room = columns === undefined ? undefined : Math.max(MIN_TIPS_COLUMNS, columns - labels.length - FOOTER_GAP_COLUMNS)
+
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="column">
+        {drawn}
+        {keyRow.length > 0 && (
+          <Box key="keys" columnGap={KEYS_GAP}>
+            {keyRow}
+          </Box>
+        )}
+        {tips.length > 0 && (
+          <Box key="tips" flexDirection="column" {...(room === undefined ? {} : { width: room })}>
+            {/* A line each, whole: wrapped onto a second row where it is wider than the room, never cut. */}
+            {tips.map((tip, i) => (
+              <Box key={`tip-${i}`}>
+                <Text dimColor wrap="wrap">
+                  {tip}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+        {meters.length > 0 && (
+          <Box key="meters" columnGap={FOOTER_GAP}>
+            {meterViews($.ui.resolve(e), meters)}
+          </Box>
+        )}
+      </Box>
+    )
+  }).catch(($, e, next) => next(e)) // the engine's own line
+
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    // The footer counts what waits in this project's queue and notes, on the terminal, where 8 and 9 open them.
+    if (e.surface !== 'terminal') return next(e)
+    const counts = await countsOf($, await shownSettings($))
+    return counts.length === 0 ? next(e) : next({ ...e, props: { ...e.props, modes: [...e.props.modes, ...counts] } })
+  }).catch(($, e, next) => next(e))
+
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    const drawn = await next(e)
+    // The line is told apart by the turn's length, which it carries to the millisecond as the turn's end does.
+    if (e.surface !== 'terminal' || e.props.waitingFor !== undefined) return drawn
+    const end = (await read($, endLines)).findLast(line => line.durationMs === e.props.durationMs)
+    // What the turn ran on, where it was fitted, then what it cost and its cache share, that in colour.
+    const spend = end?.spend
+    const plain = [end?.words, spend === undefined || spend.usd === null ? undefined : usdShort(spend.usd)].filter(part => part !== undefined).join(' · ')
+    const cache = spend === undefined ? null : cacheText(spend.cache)
+    const said = [plain, cache ?? ''].filter(part => part.length > 0).join(' · ')
+    const room = (e.viewport?.columns ?? 0) - END_LINE_COLUMNS
+    if (said.length === 0 || room < MIN_END_COLUMNS) return drawn
+    // Whole, the cache share is drawn in colour; cut to the room, the line is drawn dim alone, a colour cut off misleading.
+    const colour = said.length <= room && spend !== undefined && spend.cache !== null ? cacheColor(spend.cache) : null
+
+    const { Box, Text } = $.ui.resolve(e)
+    // The engine's line takes the row's width and sits a row down in its own drawing, so the fit's words go at the
+    // row's end, a row down as well.
+    return (
+      <Box flexWrap="nowrap">
+        <Box key="own" flexGrow={0} flexShrink={1}>
+          {drawn}
+        </Box>
+        <Box key="fitEnd" flexShrink={0} marginTop={1}>
+          {colour === null && <Text dimColor>{oneLine(said, room)}</Text>}
+          {colour !== null && plain.length > 0 && <Text dimColor>{`${plain} · `}</Text>}
+          {colour !== null && <Text color={colour}>{cache}</Text>}
+        </Box>
+      </Box>
+    )
+  }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const prompt = await read($, last)
@@ -1925,6 +3926,310 @@ export const register: Register = on => {
             ))}
           </Box>
         )}
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    const drawn = await next(e)
+    // Only the fullscreen terminal takes the click: its main screen has no mouse, and other surfaces are not tried yet.
+    // There /note on its own does the same.
+    if (e.surface !== 'terminal' || e.viewport?.isFullscreen !== true || e.props.isSummary === true) return drawn
+    const current = await shownSettings($)
+    const answer = e.props.text
+    // Read from $.state: a completed answer redraws its last block with the button.
+    if (!current.noteButton || !endsAnswer(await read($, answersDone), answer)) return drawn
+
+    const { Box, Button } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="column">
+        {drawn}
+        <Box key="noteRow" paddingLeft={2}>
+          <Button key="note" label={NOTE_BUTTON_LABEL} plain dimColor onPress={() => pressNoteButton($, answer)} />
+        </Box>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: NOTES_PANE }, async ($, e) => {
+    // Drawn from $.state, so keeping, taking or clearing a note redraws it.
+    const notes = await read($, notesHere)
+    const view = await read($, notesView)
+    const { Box, Button, Text } = $.ui.resolve(e)
+
+    if (view.kind === 'pick') {
+      const kept = new Set(notes.map(note => note.text))
+      const isKept = (line: string) => kept.has(oneLine(line, NOTE_MAX_CHARS))
+      const yours = `Your notes (${notes.length})`
+      if (e.surface === 'terminal') {
+        const pages = Math.max(1, Math.ceil(view.lines.length / PICK_PAGE))
+        const page = Math.min(view.page, pages - 1)
+        const shown = view.lines.slice(page * PICK_PAGE, (page + 1) * PICK_PAGE)
+        const room = Math.max(10, e.props.bodyColumns - HOTKEY_COLUMNS - 2)
+        return (
+          <Box flexDirection="column">
+            <Box key="title">
+              <Text weight="semibold">{PICK_TITLE}</Text>
+              <Text dimColor>{` · ${PICK_KEYS}`}</Text>
+            </Box>
+            {shown.length === 0 && (
+              <Text dimColor wrap="truncate-end">
+                {PICK_EMPTY}
+              </Text>
+            )}
+            {shown.map((line, i) => (
+              <Button
+                key={`line-${i + 1}`}
+                label={`${isKept(line) ? '✓' : ' '} ${oneLine(line, room)}`}
+                plain
+                hotkey={String(i + 1)}
+                onPress={() => toggleLine($, line)}
+              />
+            ))}
+            {pages > 1 && <Button key="more" label={`More lines (${page + 1} of ${pages})`} plain hotkey="m" onPress={() => turnPage($)} />}
+            <Button key="yours" label={yours} plain hotkey="n" onPress={() => pressNotesKey($)} />
+          </Box>
+        )
+      }
+
+      // Outside the terminal every line shows at once: a quiet button each, ✓ once kept.
+      return (
+        <Box flexDirection="column" rowGap="xs">
+          <Text size="footnote" weight="semibold" dimColor>
+            {PICK_TITLE}
+          </Text>
+          {view.lines.length === 0 && (
+            <Text size="footnote" dimColor>
+              {PICK_EMPTY}
+            </Text>
+          )}
+          {view.lines.map((line, i) => (
+            <Button key={`line-${i + 1}`} label={line} plain dimColor onPress={() => toggleLine($, line)}>
+              {isKept(line) ? <Text dimColor>{`✓ ${line}`}</Text> : <Text color="text">{`+ ${line}`}</Text>}
+            </Button>
+          ))}
+          <Button key="yours" label={yours} plain dimColor onPress={() => showList($)} />
+          <Text size="footnote" dimColor>
+            Click a line to keep it as a note, and again to drop it.
+          </Text>
+        </Box>
+      )
+    }
+
+    if (notes.length === 0) {
+      return (
+        <Text dimColor wrap={e.surface === 'terminal' ? 'truncate-end' : 'wrap'}>
+          {notesEmpty(await read($, boundKeys))}
+        </Text>
+      )
+    }
+
+    const isTerminal = e.surface === 'terminal'
+    const shown = notes.slice(0, NOTES_SHOWN)
+
+    // Every note of the project goes only on a yes.
+    if (view.kind === 'clear') {
+      const question = `Clear all ${notes.length} ${notes.length === 1 ? 'note' : 'notes'} for this project?`
+      return isTerminal ? (
+        <Box flexDirection="column">
+          <Text weight="semibold">{question}</Text>
+          <Button key="yes" label="Yes, clear them" plain hotkey="y" autoFocus onPress={() => clearNotes($)} />
+          <Button key="no" label="No, keep them" plain hotkey="n" onPress={() => showList($)} />
+        </Box>
+      ) : (
+        <Box flexDirection="column" rowGap="xs">
+          <Text>{question}</Text>
+          <Box key="answers" columnGap={1}>
+            <Button key="yes" label="Yes, clear them" onPress={() => clearNotes($)} />
+            <Button key="no" label="No, keep them" onPress={() => showList($)} />
+          </Box>
+        </Box>
+      )
+    }
+
+    // The terminal removes one note by its number; elsewhere each note carries its own ✕.
+    if (view.kind === 'remove' && isTerminal) {
+      return (
+        <Box flexDirection="column">
+          <Box key="title">
+            <Text weight="semibold">Remove a note</Text>
+            <Text dimColor>{` · ${REMOVE_KEYS}`}</Text>
+          </Box>
+          {shown.map((note, i) => (
+            <Button key={`remove-${i + 1}`} label={note.text} plain hotkey={String(i + 1)} onPress={() => removeNote($, note.id)} />
+          ))}
+          <Button key="back" label="Back to your notes" plain hotkey="n" onPress={() => showList($)} />
+        </Box>
+      )
+    }
+
+    if (isTerminal) {
+      return (
+        <Box flexDirection="column">
+          <Box key="title">
+            <Text weight="semibold">{NOTES_TITLE}</Text>
+            <Text dimColor>{` · ${NOTES_KEYS}`}</Text>
+          </Box>
+          {/* Each note whole, wrapped over as many rows as it takes: the pane opened tall enough for them. */}
+          {shown.map((note, i) => (
+            <Button key={`note-${i + 1}`} label={note.text} plain hotkey={String(i + 1)} onPress={() => useNote($, note.id)} />
+          ))}
+          <Button key="remove" label="Remove a note" plain hotkey="x" onPress={() => showRemove($)} />
+          <Button key="clear" label="Clear all notes" plain hotkey="0" onPress={() => askClear($)} />
+          {notes.length > shown.length && (
+            <Text dimColor wrap="truncate-end">{`${notes.length - shown.length} older, not shown`}</Text>
+          )}
+        </Box>
+      )
+    }
+
+    // Outside the terminal each note is a quiet button, with a small one beside it that removes the note.
+    return (
+      <Box flexDirection="column" rowGap="xs">
+        {notes.map(note => (
+          <Box key={`row-${note.id}`} flexWrap="nowrap" columnGap={1}>
+            <Box key={`take-${note.id}`} flexGrow={1} flexShrink={1}>
+              <Button key={`note-${note.id}`} label={note.text} plain dimColor onPress={() => useNote($, note.id)}>
+                <Text color="text">{`${MARKER} ${note.text}`}</Text>
+              </Button>
+            </Box>
+            <Button key={`drop-${note.id}`} label="Remove note" plain dimColor onPress={() => dropNotes($, note.id)}>
+              <Text>✕</Text>
+            </Button>
+          </Box>
+        ))}
+        <Button key="clear" label="Clear all notes" plain dimColor onPress={() => askClear($)} />
+        <Text size="footnote" dimColor>
+          A note goes into the prompt box to edit, and stays here. ✕ removes it.
+        </Text>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: XRAY_PANE }, async ($, e) => {
+    // Drawn from $.state, as /ctx measured it: each category a bar in its /context colour, then the lists and the tip.
+    const view = await read($, xrayView)
+    const { Box, Text } = $.ui.resolve(e)
+    if (view === null) {
+      return (
+        <Box key="empty">
+          <Text dimColor>No measure yet: /ctx measures the context.</Text>
+        </Box>
+      )
+    }
+    const parts = (key: string, title: string, list: readonly XrayPart[]) =>
+      list.length > 0 && (
+        <Box key={key}>
+          <Text dimColor wrap="truncate-end">{`${title}: ${partsText(list)}`}</Text>
+        </Box>
+      )
+    return (
+      <Box flexDirection="column">
+        <Box key="title">
+          <Text weight="semibold">{XRAY_TITLE}</Text>
+          <Text dimColor>{` · ${tokensShort(view.tokens)} of ${tokensShort(view.window)} (${view.percent}%) · ${XRAY_KEYS}`}</Text>
+        </Box>
+        {view.rows.map((row, i) => {
+          const full = xrayCells(row.tokens, view.window)
+          return (
+            <Box key={`row-${i + 1}`}>
+              <Text>{row.name.padEnd(XRAY_LABEL_COLUMNS)}</Text>
+              {row.isUsed ? <Text color={row.color}>{METER_FULL.repeat(full)}</Text> : <Text dimColor>{METER_FULL.repeat(full)}</Text>}
+              <Text dimColor>{`${METER_EMPTY.repeat(XRAY_CELLS - full)} ${tokensShort(row.tokens)}`}</Text>
+            </Box>
+          )
+        })}
+        {parts('outputs', 'Biggest tool outputs', view.outputs)}
+        {parts('servers', 'MCP servers', view.servers)}
+        {parts('memory', 'Memory files', view.memory)}
+        <Box key="tip">
+          <Text color={ACCENT}>{view.tip}</Text>
+        </Box>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: SETUP_PANE }, async ($, e) => {
+    // The setup's steps, each a row Enter ticks, or a line saying it is done already; a applies.
+    const view = await read($, setupView)
+    const keys = await read($, boundKeys)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const room = Math.max(10, e.props.bodyColumns - 2)
+    const tick = (isOn: boolean) => (isOn ? '[x]' : '[ ]')
+    const isBound = keys.queue !== null && keys.note !== null
+    return (
+      <Box flexDirection="column">
+        <Box key="title">
+          <Text weight="semibold">{SETUP_TITLE}</Text>
+          <Text dimColor>{` · ${SETUP_KEYS_HINT}`}</Text>
+        </Box>
+        {view.isFullscreen ? (
+          <Box key="fullscreenDone">
+            <Text dimColor wrap="truncate-end">
+              ✓ Fullscreen is on: click suggestions, the queue and notes, and select words to queue them
+            </Text>
+          </Box>
+        ) : (
+          <Button
+            key="fullscreen"
+            label={oneLine(`${tick(view.fullscreen)} Fullscreen: click suggestions, the queue and notes; select words to queue them (runs /tui fullscreen)`, room)}
+            plain
+            onPress={() => toggleSetup($, 'fullscreen')}
+          />
+        )}
+        {isBound ? (
+          <Box key="keysDone">
+            <Text dimColor wrap="truncate-end">{`✓ ${keys.queue} queues and ${keys.note} keeps what you copied`}</Text>
+          </Box>
+        ) : (
+          <Button
+            key="keys"
+            label={oneLine(`${tick(view.keys)} Alt+Q queues, Alt+N keeps what you copied (adds them to ~/.claude/keybindings.json)`, room)}
+            plain
+            onPress={() => toggleSetup($, 'keys')}
+          />
+        )}
+        <Button key="apply" label="Apply" plain hotkey="a" onPress={() => applySetup($)} />
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: QUEUE_PANE }, async ($, e) => {
+    // The queue as a list the keys work, drawn from $.state: no numbers, the ring walks the rows, Enter takes the one
+    // it is on into the prompt box, and t and x move it to the top or take it off.
+    const queue = await read($, queueHere)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    if (queue.length === 0) {
+      return (
+        <Text dimColor wrap="truncate-end">
+          {queueEmpty(await read($, boundKeys))}
+        </Text>
+      )
+    }
+
+    const room = Math.max(10, e.props.bodyColumns - QUEUE_ROW_COLUMNS)
+    return (
+      <Box flexDirection="column">
+        <Box key="title">
+          <Text weight="semibold">{QUEUE_TITLE}</Text>
+          <Text dimColor>{` · ${QUEUE_LIST_KEYS}`}</Text>
+        </Box>
+        {queue.map((action, i) => (
+          <Box key={`row-${i + 1}`} flexWrap="nowrap" columnGap={1}>
+            <Box key="take" flexGrow={1} flexShrink={1}>
+              <Button key={queueRowKey(i)} label={oneLine(action.text, room)} plain onPress={() => takeQueued($, action.id)} />
+            </Box>
+            {i === 0 && (
+              <Box key="next">
+                <Text color="success">next</Text>
+              </Box>
+            )}
+          </Box>
+        ))}
+        <Box key="keys" columnGap={3}>
+          <Button key="top" label="To the top" plain hotkey="t" onPress={() => topFocused($)} />
+          <Button key="drop" label="Take it off" plain hotkey="x" onPress={() => dropFocused($)} />
+        </Box>
       </Box>
     )
   })
@@ -2060,6 +4365,43 @@ export const register: Register = on => {
           </Box>
           <Text size="footnote" dimColor>
             {PROMPT_NOTE}
+          </Text>
+        </Box>
+        <Box key="notesGroup" flexDirection="column">
+          <Text size="footnote" weight="semibold" dimColor>
+            Notes
+          </Text>
+          <Box key="notesCard" flexDirection="column" borderStyle="round" borderColor={QUOTE_COLOR} paddingX="sm">
+            <Select
+              key="noteButton"
+              label="Copy, queue and notes keys in the terminal, and Add note under each answer in fullscreen"
+              value={current.noteButton ? 'on' : 'off'}
+              options={ON_OFF}
+              onSelect={value => changeSetting($, 'noteButton', value === 'on')}
+            />
+          </Box>
+          <Text size="footnote" dimColor>
+            {NOTE_BUTTON_NOTE}
+          </Text>
+        </Box>
+        <Box key="metersGroup" flexDirection="column">
+          <Text size="footnote" weight="semibold" dimColor>
+            Meters
+          </Text>
+          <Box key="metersCard" flexDirection="column" borderStyle="round" borderColor={QUOTE_COLOR} paddingX="sm">
+            <Select
+              key="meters"
+              label="Meters in the terminal's footer, tips and end lines"
+              value={current.meters ? 'on' : 'off'}
+              options={ON_OFF}
+              onSelect={value => changeSetting($, 'meters', value === 'on')}
+            />
+            <Select key="coldAfter" label="Cold cache warning" value={current.coldAfter} options={COLD_AFTERS} onSelect={value => changeSetting($, 'coldAfter', value)} />
+            <Select key="compactAt" label="Auto-compact" value={current.compactAt} options={COMPACT_ATS} onSelect={value => changeSetting($, 'compactAt', value)} />
+            <Select key="doneAfter" label="Done alert" value={current.doneAfter} options={DONE_AFTERS} onSelect={value => changeSetting($, 'doneAfter', value)} />
+          </Box>
+          <Text size="footnote" dimColor>
+            {COMPACT_NOTE}
           </Text>
         </Box>
         <Text size="footnote" dimColor>
