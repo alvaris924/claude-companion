@@ -302,12 +302,12 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     const isRefused = refused?.model === e.model
     return { turnId: e.turnId, index: e.index, answer: isRefused ? '' : 'done', toolUses: [], stopReason: isRefused ? null : ('end_turn' as const), usage: null }
   })
-  on('env.get', (_, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : e.name === 'USERPROFILE' ? 'C:/Users/dev' : undefined }))
+  on('env.get', (_, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : e.name === 'USERPROFILE' ? '/Users/dev' : undefined }))
   // The machine's files, by path with slashes and no drive: the engine hands a path on as the machine writes it, on
   // Windows with backslashes and the drive it resolved to.
   const slashed = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\/)/, '')
   const files = new Map(Object.entries(given).map(([path, text]) => [slashed(path), text]))
-  if (keybindings !== undefined) files.set(slashed('C:/Users/dev/.claude/keybindings.json'), keybindings)
+  if (keybindings !== undefined) files.set(slashed('/Users/dev/.claude/keybindings.json'), keybindings)
   on('fs.read', (_, e) => {
     const text = files.get(slashed(e.path))
     if (text === undefined) throw new Error(`ENOENT: no such file, open '${e.path}'`)
