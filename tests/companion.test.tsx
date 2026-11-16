@@ -1,8 +1,8 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
-import type { ModelUsage, On, RenderSurface, TurnStepInput } from 'claude-code'
+import type { ModelUsage, On, RenderSurface, SessionContextBreakdown, SessionMessage, TurnStepInput, UiNotifyResult } from 'claude-code'
 
-import { REDO_HREF, canSuggest, familyOf, fitFor, gradeOf, gradeTask, isElsewhere, isOrder, isReply, isStronger, nextLevel, pickHint, settingsFrom, shortLabel, storedOf } from '../hooks/register'
+import { REDO_HREF, cacheColor, canSuggest, durationText, xrayOf, xrayText, xrayTip, cleanCopy, familyOf, footerCounts, meterCells, resetsIn, turnCost, isFromAnswers, keyName, linesOf, withCompanionKeys, fitFor, gradeOf, gradeTask, isElsewhere, isOrder, isReply, isStronger, nextLevel, pickHint, settingsFrom, shortLabel, storedOf, tipLines, notesRows, wrappedRows } from '../hooks/register'
 
 const PLUGIN = 'companion'
 const PANE = 'last-prompt'
@@ -13,6 +13,8 @@ const BAND = {
   component: 'AbovePrompt',
   props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: SCROLL, view: {} },
 } as const
+// A band wide enough for the keys' full labels beside the last prompt.
+const WIDE_BAND = { ...BAND, props: { ...BAND.props, bodyColumns: 120 } } as const
 const PANE_PROPS = { isFocused: false, bodyColumns: 60, placement: 'inline', scroll: SCROLL, view: {} } as const
 const PANE_MOUNT = { plugin: PLUGIN, component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, title: 'Last & next prompt' } } as const
 const SETTINGS_MOUNT = { plugin: PLUGIN, component: 'Pane', requestId: SETTINGS, props: { ...PANE_PROPS, title: 'Companion settings' } } as const
@@ -36,6 +38,8 @@ type Setup = {
   answer?: string
   /** How long the model takes, on the mocked clock. */
   lateMs?: number
+  /** How long each grading call takes before it answers, on the mocked clock. */
+  gradeLateMs?: number
   /** Whether the prompt box shows a dim suggestion: the terminal does, VS Code 2.1.300 does not. */
   showsSuggestions?: boolean
   /** Models that reply with no text. */
@@ -57,6 +61,20 @@ type Setup = {
   commandsFail?: boolean
   /** Run as a prompt is submitted, before the submit resolves: the real engine starts the prompt's turn there. */
   onSubmit?: (text: string) => Promise<void>
+  /** What the plugin's store holds under `notes` at the start: notes as stored, or anything else a store may hold. */
+  notes?: readonly unknown[]
+  /** What the plugin's store holds under `queue` at the start: queued actions, or anything else a store may hold. */
+  queue?: readonly unknown[]
+  /** The text of the person's keybindings file; absent, there is none. */
+  keybindings?: string
+  /** Files the machine holds at the start, by path written with slashes; `$.fs` reads, finds and writes them. */
+  files?: Readonly<Record<string, string>>
+  /** Whether the surface refuses a copy, as a remote one with no clipboard path does. */
+  copyFails?: boolean
+  /** The folder the session works in, as `$.session.root()` answers it. */
+  root?: string
+  /** Programs the machine does not have: starting one fails, as a missing executable does. */
+  missing?: readonly string[]
 }
 
 /** What the engine did beneath the plugins, as the tests read it back. */
@@ -81,10 +99,36 @@ type World = {
   copied: string[]
   toasts: string[]
   ran: (readonly string[])[]
+  /** The files the plugins wrote, by path written with slashes. */
+  written: { path: string; text: string }[]
+  /** The panes the plugins closed. */
+  closed: string[]
+  /** The folder the session works in. */
+  root: string
+  /** What the person selected with the mouse last, as `$.ui.selection()` answers it. */
+  selection: { text: string; requestId?: string } | undefined
+  /** The text on the machine's clipboard, as Windows' Get-Clipboard reads it. */
+  hostClipboard: string
   /** The slash commands the plugins ran, as typed: "/model claude-opus-5-5". */
   commands: string[]
   /** The session's model, which a /model the plugins run changes. */
   sessionModel: string | undefined
+  /** What the session has cost so far in dollars, as `$.session.usage()` reports it; undefined for no figure. */
+  usd: number | undefined
+  /** How many times the plugins compacted the conversation. */
+  compacted: number
+  /** The conversation so far, as `$.session.messages()` answers it. */
+  messages: SessionMessage[]
+  /** What the model writes when asked for a handoff; undefined gives no answer. */
+  handoff: string | undefined
+  /** What the plugins asked a handoff of: the conversation's words they sent. */
+  handedOver: string[]
+  /** The notifications the plugins raised, by their text. */
+  notified: string[]
+  /** What the person's notification channel answers. */
+  notifyResult: UiNotifyResult
+  /** The context window broken down, as `$.session.usage({ breakdown })` answers it; undefined for none. */
+  breakdown: SessionContextBreakdown | undefined
 }
 
 /**
@@ -93,8 +137,8 @@ type World = {
  * opening (placed wherever a surface attaches), and a Windows host whose processes all succeed.
  */
 function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): World {
-  const { answer = CHOICES.join('\n'), lateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused, grades = {}, sessionModel, commandsFail = false, onSubmit } = setup
-  mock.store(on, stored === undefined ? {} : { settings: stored })
+  const { answer = CHOICES.join('\n'), lateMs = 0, gradeLateMs = 0, showsSuggestions = true, declinedBy = [], stored, contextTokens, refused, grades = {}, sessionModel, commandsFail = false, onSubmit, notes, queue, keybindings, files: given = {}, copyFails = false, root = '/work/parser', missing = [] } = setup
+  mock.store(on, { ...(stored === undefined ? {} : { settings: stored }), ...(notes === undefined ? {} : { notes }), ...(queue === undefined ? {} : { queue }) })
   const callsFor: Record<string, number> = {} // grading calls so far, by the request graded
   const world: World = {
     clock: mock.clock(on, { now: 1_000 }),
@@ -112,11 +156,30 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     copied: [],
     toasts: [],
     ran: [],
+    written: [],
+    closed: [],
+    root,
+    selection: undefined,
+    hostClipboard: '',
     commands: [],
     sessionModel,
+    usd: undefined,
+    compacted: 0,
+    messages: [],
+    handoff: undefined,
+    handedOver: [],
+    notified: [],
+    notifyResult: { isSent: true, channel: 'terminal_bell' },
+    breakdown: undefined,
   }
 
   on('session.surfaces', () => ({ value: surfaces }))
+  on('session.root', () => ({ value: world.root }))
+  on('ui.selection', () => ({ value: world.selection }))
+  on('ui.close', (_, e) => {
+    world.closed.push(e.id)
+    return { value: undefined }
+  })
   on('session.model', () => ({ value: world.sessionModel ?? '' }))
   on('command.run', (_, e) => {
     if (commandsFail) throw new Error('no such command here')
@@ -133,6 +196,12 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('model.complete', async (_, e) => {
+    if (typeof e.system === 'string' && e.system.includes('fresh Claude Code conversation') && typeof e.prompt === 'string') {
+      world.handedOver.push(e.prompt)
+      const handoff = world.handoff
+      if (handoff === undefined) return { value: { isAnswered: false as const, reason: 'empty-reply' as const, usage: NO_USAGE } }
+      return { value: { isAnswered: true as const, text: handoff, usage: NO_USAGE } }
+    }
     const graded = typeof e.prompt === 'string' ? /<new_request>\n([\s\S]*?)\n<\/new_request>/.exec(e.prompt)?.[1] : undefined
     if (graded !== undefined && typeof e.prompt === 'string') {
       world.graded.push({ model: e.model, effort: e.effort, system: e.system, prompt: e.prompt })
@@ -140,6 +209,7 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
       const given = grades[graded]
       const said = (Array.isArray(given) ? given[calls - 1] : given) ?? 'mid'
       if (said === 'hang') await world.clock.sleep(60_000) // a call that does not answer in time
+      if (gradeLateMs > 0) await world.clock.sleep(gradeLateMs)
       if (declinedBy.includes(e.model) || said === 'none' || said === 'hang') return { value: { isAnswered: false as const, reason: 'empty-reply' as const, usage: NO_USAGE } }
       return { value: { isAnswered: true as const, text: said, usage: NO_USAGE } }
     }
@@ -159,6 +229,7 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     return { isFilled: true }
   })
   on('ui.copy', (_, e) => {
+    if (copyFails) return { value: { isCopied: false as const, reason: 'no-clipboard' as const } }
     world.copied.push(e.text)
     return { value: { isCopied: true as const } }
   })
@@ -167,7 +238,30 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     return { value: undefined }
   })
   on('ui.render', ($, e) => {
-    const { Box } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
+    // The engine's own lines, from the props the plugins handed on: the hint line under the prompt box with what a
+    // plugin added at its end, the footer's labels, and a turn's end line.
+    if (e.component === 'PromptHint') {
+      return (
+        <Box key="engineHint">
+          <Text>{e.props.tail === undefined ? e.props.hint : `${e.props.hint} · ${e.props.tail}`}</Text>
+        </Box>
+      )
+    }
+    if (e.component === 'SessionMode') {
+      return (
+        <Box key="engineModes">
+          <Text>{e.props.modes.join(' & ')}</Text>
+        </Box>
+      )
+    }
+    if (e.component === 'TurnDuration') {
+      return (
+        <Box key="engineEnd">
+          <Text>{`${e.props.word} for ${e.props.durationMs}ms`}</Text>
+        </Box>
+      )
+    }
     return <Box />
   })
   on('ui.open', (_, e) => {
@@ -184,17 +278,52 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     world.aborted.push(e.turnId)
     return { value: undefined }
   })
-  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: contextTokens, window: 1_000_000 }, rateLimits: [] } }))
+  on('session.usage', (_, e) => ({
+    value: {
+      startedAt: 0,
+      context: { tokens: contextTokens, window: 1_000_000, ...(e?.breakdown !== undefined && world.breakdown !== undefined ? { breakdown: world.breakdown } : {}) },
+      rateLimits: [],
+      ...(world.usd === undefined ? {} : { cost: { usd: world.usd } }),
+    },
+  }))
+  on('session.messages', () => ({ value: world.messages }))
+  on('ui.notify', (_, e) => {
+    world.notified.push(e.text)
+    return { value: world.notifyResult }
+  })
+  on('session.compact', () => {
+    world.compacted += 1
+    return { messages: [{ role: 'user' as const, text: 'The conversation so far, summed up.', toolUses: [] }] }
+  })
+  on('session.measure', (_, e) => ({ changed: e.changed }))
   on('turn.step', async function* (_, e) {
     world.steps.push({ model: e.model, effort: e.effort })
     if (refused?.model === e.model && refused.how === 'throws') throw new Error('this model is not available here')
     const isRefused = refused?.model === e.model
     return { turnId: e.turnId, index: e.index, answer: isRefused ? '' : 'done', toolUses: [], stopReason: isRefused ? null : ('end_turn' as const), usage: null }
   })
-  on('env.get', (_, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
+  on('env.get', (_, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : e.name === 'USERPROFILE' ? 'C:/Users/dev' : undefined }))
+  // The machine's files, by path with slashes and no drive: the engine hands a path on as the machine writes it, on
+  // Windows with backslashes and the drive it resolved to.
+  const slashed = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\/)/, '')
+  const files = new Map(Object.entries(given).map(([path, text]) => [slashed(path), text]))
+  if (keybindings !== undefined) files.set(slashed('C:/Users/dev/.claude/keybindings.json'), keybindings)
+  on('fs.read', (_, e) => {
+    const text = files.get(slashed(e.path))
+    if (text === undefined) throw new Error(`ENOENT: no such file, open '${e.path}'`)
+    return { value: text }
+  })
+  on('fs.exists', (_, e) => ({ value: files.has(slashed(e.path)) }))
+  on('fs.write', (_, e) => {
+    world.written.push({ path: slashed(e.path), text: e.text })
+    files.set(slashed(e.path), e.text)
+    return { value: undefined }
+  })
   on('process.run', (_, e) => {
     world.ran.push(e.argv)
-    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (missing.includes(e.argv[0] ?? '')) throw new Error(`${e.argv[0]} is not installed`)
+    const stdout = e.argv.join(' ').includes('Get-Clipboard') ? world.hostClipboard : ''
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
 
   return world
@@ -257,6 +386,62 @@ async function choicesDrawn(mounted: Drawn): Promise<string[]> {
 /** Presses the button of the choice numbered `n`, from 1. */
 async function pressChoiceIn(mounted: Drawn, n: number): Promise<void> {
   await mounted.press({ key: `choice-${n}` })
+}
+
+const WIDE = { columns: 120, rows: 30, isFullscreen: false }
+const IDLE = { isDraft: false, isWorking: false }
+
+/** The hint site under the prompt box: the engine's own line as the plugins left it, and Companion's lines under it. */
+async function hintSite($: Engine, state: { isDraft: boolean; isWorking: boolean } = IDLE, surface: RenderSurface = 'terminal', viewport = WIDE) {
+  const hint = await $.ui.mount({ plugin: PLUGIN, component: 'PromptHint', surface, props: { ...state, hint: '? for shortcuts' }, viewport })
+  const own = (await hint.find({ key: 'engineHint' }))?.text
+  const keys = (await hint.find({ key: 'keys' }))?.text
+  const lines: string[] = []
+  for (let line = await hint.find({ key: 'tip-0' }); line !== undefined; line = await hint.find({ key: `tip-${lines.length}` })) lines.push(line.text)
+  await hint.unmount()
+  return { own, keys, tips: lines.length === 0 ? undefined : lines.join('\n') }
+}
+
+/** Companion's lines under the engine's hint line, joined by newlines; idle unless told, undefined where it draws none. */
+async function hintLine($: Engine, state: { isDraft: boolean; isWorking: boolean } = IDLE, surface: RenderSurface = 'terminal', viewport = WIDE) {
+  return (await hintSite($, state, surface, viewport)).tips
+}
+
+/** The footer's labels as the engine joins them, after a mode of its own. */
+async function footerLine($: Engine, surface: RenderSurface = 'terminal') {
+  const footer = await $.ui.mount({ plugin: PLUGIN, component: 'SessionMode', surface, props: { modes: ['focus'] } })
+  const text = (await footer.find({ key: 'engineModes' }))?.text
+  await footer.unmount()
+  return text
+}
+
+/** The meters on their line at the bottom, under the prompt box, joined by " & "; undefined where none shows. */
+async function meterLine($: Engine, surface: RenderSurface = 'terminal') {
+  const hint = await $.ui.mount({ plugin: PLUGIN, component: 'PromptHint', surface, props: { ...IDLE, hint: '? for shortcuts' }, viewport: WIDE })
+  const parts: string[] = []
+  for (const key of ['ctxMeter', 'weekMeter']) {
+    const text = (await hint.find({ key }))?.text
+    if (text !== undefined) parts.push(text)
+  }
+  await hint.unmount()
+  return parts.length === 0 ? undefined : parts.join(' & ')
+}
+
+/** The theme colour a meter's percent is drawn in, for the meter keyed `key`. */
+async function meterColorOf($: Engine, key: string) {
+  const hint = await $.ui.mount({ plugin: PLUGIN, component: 'PromptHint', surface: 'terminal', props: { ...IDLE, hint: '? for shortcuts' }, viewport: WIDE })
+  const percent = (await hint.findAll({ type: 'Text' })).filter(text => /^ \d+%$/.test(text.text))
+  const index = ['ctxMeter', 'weekMeter'].indexOf(key)
+  await hint.unmount()
+  return percent[index]?.props.color
+}
+
+/** What the plugins add to the end line of a turn that took `durationMs`; undefined where they add nothing. */
+async function endWords($: Engine, durationMs = 5, columns = WIDE.columns) {
+  const end = await $.ui.mount({ plugin: PLUGIN, component: 'TurnDuration', surface: 'terminal', props: { word: 'Baked', durationMs }, viewport: { ...WIDE, columns } })
+  const text = (await end.find({ key: 'fitEnd' }))?.text
+  await end.unmount()
+  return text
 }
 
 describe('companion', () => {
@@ -462,12 +647,13 @@ describe('companion', () => {
     }
     // The terminal keeps its quote bar, and numbers its choices.
     const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await terminal.find({ key: 'prompt' }))?.props).toMatchObject({ borderStyle: 'quote', borderColor: 'promptBorder' })
+    expect((await terminal.find({ key: 'quoteBar' }))?.text).toBe('▎')
+    expect(await terminal.find({ type: 'Text', text: '▎' })).toMatchObject({ props: { color: 'promptBorder' } })
     expect((await terminal.find({ key: 'choice-1' }))?.props).toMatchObject({ plain: true, hotkey: '1', label: CHOICES[0] })
     await terminal.unmount()
 
     const pane = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'vscode' })
-    for (const key of ['suggestCard', 'routeCard', 'promptCard']) expect((await pane.find({ key }))?.props.borderStyle).toBe('round')
+    for (const key of ['suggestCard', 'routeCard', 'promptCard', 'notesCard']) expect((await pane.find({ key }))?.props.borderStyle).toBe('round')
     await pane.unmount()
   })
 
@@ -868,7 +1054,7 @@ describe('working the mod from the keyboard', () => {
     await $.ui.focus({ component: 'Pane', requestId: SETTINGS, plugin: PLUGIN, element, origin: { kind: 'person' } })
   }
 
-  test('the terminal numbers the choices as Claude Code numbers a survey, and says under them how to pick one', async ($, on) => {
+  test('the terminal numbers the choices as Claude Code numbers a survey, and the hint line under the prompt box says how to pick one', async ($, on) => {
     const world = engine(on, ['terminal'], { showsSuggestions: false })
     await answered($, world)
 
@@ -876,25 +1062,67 @@ describe('working the mod from the keyboard', () => {
     for (const [i, choice] of CHOICES.entries()) {
       expect((await band.find({ key: `choice-${i + 1}` }))?.props).toMatchObject({ label: choice, plain: true, hotkey: String(i + 1) })
     }
-    expect((await band.find({ key: 'hint' }))?.text).toBe('type 1–3 to send · /companion for settings')
+    // A line each for 1, 2 and 3.
+    expect((await band.find({ key: 'choices' }))?.props).toMatchObject({ flexDirection: 'column' })
+    // 7, 8 and 9 stay in the band for the digits, hidden; they show under the prompt box.
+    expect((await band.find({ key: 'keyPresses' }))?.props).toMatchObject({ display: 'none' })
+    expect((await band.find({ key: 'copyKey' }))?.props).toMatchObject({ label: 'Copy answer', plain: true, hotkey: '7' })
+    expect((await band.find({ key: 'queueKey' }))?.props).toMatchObject({ label: 'View queue', plain: true, hotkey: '8' })
+    expect((await band.find({ key: 'noteKey' }))?.props).toMatchObject({ label: 'View notes', plain: true, hotkey: '9' })
+    expect((await band.find({ key: 'firstRow' }))?.text).not.toMatch(/View queue/)
+    expect(await band.find({ key: 'hint' })).toBeUndefined()
+    const TIPS = 'new here? /companion-setup\nCopy text, then /queue to queue or /note to note'
+    // Lines of their own under the engine's, which keeps its words whole: the keys, then how to work them. The numbered
+    // choices say themselves how to pick one.
+    expect(await hintSite($)).toEqual({ own: '? for shortcuts', keys: 'Copy answerView queueView notes', tips: TIPS })
+    // It stays while typing and while an answer runs, so the prompt box keeps its row.
+    expect(await hintLine($, { isDraft: true, isWorking: false })).toBe(TIPS)
+    expect(await hintLine($, { isDraft: false, isWorking: true })).toBe(TIPS)
+    // A line each, whole, never cut: each wraps where it is wider than its room.
+    const site = await $.ui.mount({ plugin: PLUGIN, component: 'PromptHint', surface: 'terminal', props: { ...IDLE, hint: '? for shortcuts' }, viewport: WIDE })
+    for (const tip of TIPS.split('\n')) expect(await site.find({ type: 'Text', text: tip })).toMatchObject({ props: { wrap: 'wrap' } })
+    await site.unmount()
     await band.press({ key: 'choice-2' }) // what the engine does with a 2 typed into the empty prompt box
     expect(world.submitted).toEqual(['merge the parser work', CHOICES[1]])
     await band.unmount()
 
-    // Under a pointer they keep their look: no numbers, no line about keys.
-    await answered($, world)
+    // Under the prompt box a click presses one, in fullscreen.
+    const hint = await $.ui.mount({ plugin: PLUGIN, component: 'PromptHint', surface: 'terminal', props: { ...IDLE, hint: '? for shortcuts' }, viewport: WIDE })
+    await hint.press({ key: 'copyKey' })
+    expect(world.copied).toEqual([REPLY])
+    await hint.unmount()
+
+    // Under a pointer they keep their look: no numbers, and nothing added to the hint line.
     const vscode = await $.ui.mount({ ...BAND, surface: 'vscode' })
     expect((await vscode.find({ key: 'choice-1' }))?.props.hotkey).toBeUndefined()
-    expect(await vscode.find({ key: 'hint' })).toBeUndefined()
+    expect(await vscode.find({ key: 'noteKey' })).toBeUndefined()
     await vscode.unmount()
+    expect(await hintSite($, IDLE, 'desktop')).toEqual({ own: '? for shortcuts', tips: undefined })
   })
 
-  test('the line under the choices follows the settings: where a pick goes, and the number keys switched off', async ($, on) => {
+  test("on the terminal the last prompt is the band's last row, right over the prompt box; elsewhere its first", async ($, on) => {
+    const world = engine(on, ['terminal', 'vscode'], { showsSuggestions: false, stored: { lastPrompt: true } })
+    await answered($, world)
+    const order = async (surface: RenderSurface) => {
+      const band = await $.ui.mount({ ...BAND, surface })
+      const keys = (await band.findAll({ type: 'Box' })).map(box => box.props.key)
+      await band.unmount()
+      return keys
+    }
+    const terminal = await order('terminal')
+    expect(terminal.indexOf('choices')).toBeGreaterThan(-1)
+    expect(terminal.indexOf('firstRow')).toBeGreaterThan(terminal.indexOf('choices'))
+    const vscode = await order('vscode')
+    expect(vscode.indexOf('firstRow')).toBeGreaterThan(-1)
+    expect(vscode.indexOf('firstRow')).toBeLessThan(vscode.indexOf('choices'))
+  })
+
+  test('the hint line follows the settings: where a pick goes, and the number keys switched off', async ($, on) => {
     const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { onPress: 'box' } })
     await answered($, world)
 
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.find({ key: 'hint' }))?.text).toBe('type 1–3 to edit before sending · /companion for settings')
+    expect(await hintLine($)).not.toMatch(/type 1–3/)
 
     const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
     await menu.press({ key: 'setting-numberKeys' })
@@ -902,7 +1130,13 @@ describe('working the mod from the keyboard', () => {
     // Off, a number is typed as usual: the choices are buttons the band's focus reaches.
     expect((await band.find({ key: 'choice-1' }))?.props.hotkey).toBeUndefined()
     expect((await band.find({ key: 'choice-1' }))?.props.plain).toBeUndefined()
-    expect((await band.find({ key: 'hint' }))?.text).toBe('ctrl+x tab, then ↑↓ and Enter to pick · /companion for settings')
+    expect(await hintLine($)).toMatch(/^ctrl\+x tab, then ↑↓ and Enter to pick · Copy text, /m) // with the keys' other tip
+    expect((await band.find({ key: 'noteKey' }))?.props.hotkey).toBeUndefined()
+    expect((await band.find({ key: 'queueKey' }))?.props.hotkey).toBeUndefined()
+    // Reached by the band's focus, the keys show in the band, beside the last prompt, and not under the prompt box.
+    expect((await band.find({ key: 'firstRow' }))?.text).toMatch(/merge the parser work.*View queue.*View notes/)
+    expect(await band.find({ key: 'keyPresses' })).toBeUndefined()
+    expect((await hintSite($)).keys).toBeUndefined()
     await menu.unmount()
     await band.unmount()
 
@@ -914,16 +1148,20 @@ describe('working the mod from the keyboard', () => {
 
     const ran = await $.command.run({ command: 'companion', args: '', origin: { kind: 'composer' }, presentation: PRESENTATION })
     expect(ran.text).toBe('Companion settings opened.')
-    expect(world.openedWith).toEqual([{ id: SETTINGS, title: 'Companion settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 24 }])
+    expect(world.openedWith).toEqual([{ id: SETTINGS, title: 'Companion settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 31 }])
   })
 
   test('the terminal menu: a row per setting with its value, the ring starting on the first, and keys said under it', async ($, on) => {
     engine(on, ['terminal'], { stored: { route: true } })
 
     const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
-    const rows = ['suggest', 'model', 'effort', 'choices', 'onPress', 'numberKeys', 'fit', 'easy', 'mid', 'hard', 'limit', 'grader', 'grading', 'lastPrompt']
+    const rows = ['suggest', 'model', 'effort', 'choices', 'onPress', 'numberKeys', 'fit', 'easy', 'mid', 'hard', 'limit', 'grader', 'grading', 'lastPrompt', 'noteButton', 'meters', 'coldAfter', 'compactAt']
     for (const field of rows) expect(await menu.find({ key: `setting-${field}` })).toBeDefined()
+    expect((await menu.find({ key: 'setting-meters' }))?.text).toBe(`${'Meters'.padEnd(24)}On`)
+    expect((await menu.find({ key: 'setting-coldAfter' }))?.text).toBe(`${'Cold cache warning'.padEnd(24)}1 hour`)
+    expect((await menu.find({ key: 'setting-compactAt' }))?.text).toBe(`${'Auto-compact'.padEnd(24)}Off`)
     expect((await menu.find({ key: 'setting-lastPrompt' }))?.text).toBe(`${'In VS Code'.padEnd(24)}Off`)
+    expect((await menu.find({ key: 'setting-noteButton' }))?.text).toBe(`${'Copy, queue, notes keys'.padEnd(24)}On`)
     expect((await menu.find({ key: 'setting-suggest' }))?.props.autoFocus).toBe(true)
     expect((await menu.find({ key: 'setting-fit' }))?.text).toBe(`${'Fit to each task'.padEnd(24)}Automatic`)
     expect((await menu.find({ key: 'setting-easy' }))?.text).toBe(`${'Easy tasks'.padEnd(24)}Haiku 5.5 at low effort`)
@@ -1052,6 +1290,25 @@ describe('task routing', () => {
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect(await band.find({ key: 'task' })).toBeUndefined()
     await band.unmount()
+    expect(await endWords($)).toBeUndefined()
+  })
+
+  test('each end line on the terminal says what its own turn ran on, told apart by its length; too narrow, nothing', async ($, on) => {
+    const hard = 'refactor the config loader into one module per source'
+    engine(on, ['terminal'], { stored: { route: true }, grades: { [QUESTION]: 'easy', [hard]: 'hard' } })
+
+    await typed($, QUESTION)
+    await $.turn.start({ text: QUESTION, turnId: 't1' })
+    await step($, { turnId: 't1', index: 0, messageCount: 1, ...OPUS_MAX })
+    await $.turn.complete({ answer: REPLY, durationMs: 3630, isAborted: false, turnId: 't1', reason: 'answer' })
+    await typed($, hard)
+    await runTurn($, 't2', hard, OPUS_MAX) // 5 ms
+
+    expect(await endWords($, 3630)).toBe('Easy task · Haiku 5.5 at low effort')
+    expect(await endWords($, 5)).toBe('Hard task · Opus 5.5 at max effort')
+    expect(await endWords($, 4000)).toBeUndefined() // no turn of that length ran fitted
+    expect(await endWords($, 5, 50)).toBeUndefined() // the engine's own words fill a row this narrow
+    expect(await endWords($, 3630, 71)).toBe('Easy task · Haiku 5.5 at…') // cut to the room left
   })
 
   test('Sonnet 5.5 grades a new task once, and an easy one runs on Haiku 5.5 at low effort for every request of its turn', async ($, on) => {
@@ -1064,8 +1321,10 @@ describe('task routing', () => {
     expect(world.graded[0]?.prompt).toContain(`<new_request>\n${QUESTION}\n</new_request>`)
     expect(String(world.graded[0]?.system)).toContain('Answer with one word: easy, mid or hard.')
     expect(world.steps).toEqual([HAIKU_LOW, HAIKU_LOW])
+    // The terminal's end line says what the turn ran on; the band keeps the redo alone.
+    expect(await endWords($)).toBe('Easy task · Haiku 5.5 at low effort')
     const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await terminal.find({ key: 'task' }))?.text).toBe('Easy task · Haiku 5.5 at low effort')
+    expect(await terminal.find({ key: 'task' })).toBeUndefined()
     expect((await terminal.find({ key: 'redo' }))?.props).toMatchObject({ label: 'Ask again on Opus 5.5', plain: true, hotkey: '0' })
     await terminal.unmount()
     // Elsewhere one markdown line: what the turn ran on, then the redo as a link the plugin answers.
@@ -1085,15 +1344,14 @@ describe('task routing', () => {
 
     await typed($, mid)
     await runTurn($, 't1', mid, OPUS_MAX)
-    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.find({ key: 'task' }))?.text).toBe('Mid task · Sonnet 5.5 at medium effort')
-    await band.unmount()
+    expect(await endWords($)).toBe('Mid task · Sonnet 5.5 at medium effort')
 
     await typed($, hard)
     await runTurn($, 't2', hard, OPUS_MAX)
+    expect(await endWords($)).toBe('Hard task · Opus 5.5 at max effort')
+    // Nothing to redo: the band draws no line for the turn.
     const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await after.find({ key: 'task' }))?.text).toBe('Hard task · Opus 5.5 at max effort')
-    expect(await after.find({ key: 'redo' })).toBeUndefined()
+    expect(await after.find({ key: 'fit' })).toBeUndefined()
     await after.unmount()
 
     expect(world.steps).toEqual([SONNET_MEDIUM, OPUS_MAX])
@@ -1130,7 +1388,7 @@ describe('task routing', () => {
     expect(world.steps).toEqual([HAIKU_LOW])
   })
 
-  test('past the limit only hard tasks switch; easy and mid ones keep the session model and the band says why', async ($, on) => {
+  test('past the limit only hard tasks switch; easy and mid ones keep the session model and the end line says why', async ($, on) => {
     const mid = 'add a test for the parser'
     const hard = 'refactor the config loader into one module per source'
     const world = engine(on, ['terminal'], {
@@ -1141,8 +1399,8 @@ describe('task routing', () => {
 
     await typed($, QUESTION)
     await runTurn($, 't1', QUESTION, OPUS_MAX)
+    expect(await endWords($)).toBe('Easy task · Opus 5.5 at max effort · kept: long conversation')
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.find({ key: 'task' }))?.text).toBe('Easy task · Opus 5.5 at max effort · kept: long conversation')
     expect(await band.find({ key: 'redo' })).toBeUndefined()
     await band.unmount()
     await typed($, mid)
@@ -1294,8 +1552,8 @@ describe('task routing', () => {
     await runTurn($, 't1', QUESTION, { model: 'claude-opus-5-5[1m]', effort: 'max' })
 
     expect(world.steps).toEqual([{ model: 'claude-haiku-5-5[1m]', effort: 'low' }])
+    expect(await endWords($)).toBe('Easy task · Haiku 5.5 at low effort')
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.find({ key: 'task' }))?.text).toBe('Easy task · Haiku 5.5 at low effort')
     expect((await band.find({ key: 'redo' }))?.props.label).toBe('Ask again on Opus 5.5')
     await band.unmount()
   })
@@ -1723,10 +1981,10 @@ describe('suggest mode', () => {
     expect(world.steps).toEqual([SONNET_HIGH, OPUS_MAX, OPUS_MAX])
     expect(world.graded.length).toBe(1) // the switched task and its follow-up are not graded again
 
-    // The task now runs as Automatic runs one: what it ran on, and the way back.
+    // The task now runs as Automatic runs one: what it ran on (on its end line), and the way back.
     await band.unmount()
+    expect(await endWords($)).toBe('Hard task · Opus 5.5 at max effort')
     const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await after.find({ key: 'task' }))?.text).toBe('Hard task · Opus 5.5 at max effort')
     expect((await after.find({ key: 'redo' }))?.props.label).toBe('Ask again on Sonnet 5.5')
     await after.unmount()
   })
@@ -1830,13 +2088,15 @@ describe('suggest mode', () => {
     expect(await band.find({ key: 'redo' })).toBeUndefined()
     await band.unmount()
 
-    // The follow-ups go to Haiku with no new grading; the band then speaks as under Automatic, with the way back.
+    // The follow-ups go to Haiku with no new grading; their end line then speaks as under Automatic, the band keeps
+    // the way back.
     await typed($, 'and the tests?')
     await runTurn($, 't2', 'and the tests?', OPUS_MAX)
     expect(world.steps).toEqual([OPUS_MAX, HAIKU_LOW])
     expect(world.graded.length).toBe(1)
+    expect(await endWords($)).toBe('Easy task · Haiku 5.5 at low effort')
     const after = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await after.find({ key: 'task' }))?.text).toBe('Easy task · Haiku 5.5 at low effort')
+    expect(await after.find({ key: 'task' })).toBeUndefined()
     expect((await after.find({ key: 'redo' }))?.props.label).toBe('Ask again on Opus 5.5')
     await after.unmount()
 
@@ -1879,6 +2139,23 @@ describe('suggest mode', () => {
     await runTurn($, 't3', WORK, SONNET_HIGH)
     expect(world.graded.length).toBe(2)
     expect(world.steps).toEqual([SONNET_HIGH, SONNET_HIGH, SONNET_HIGH])
+  })
+
+  test("a grade that comes after a short turn ended still goes on that turn's end line, and the band keeps the button", async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, grades: { [QUESTION]: 'easy' }, gradeLateMs: 3_000 })
+
+    await typed($, QUESTION)
+    await $.turn.start({ text: QUESTION, turnId: 't1' })
+    await step($, { turnId: 't1', index: 0, messageCount: 1, ...OPUS_MAX })
+    await $.turn.complete({ answer: REPLY, durationMs: 2_100, isAborted: false, turnId: 't1', reason: 'answer' })
+    expect(await endWords($, 2_100)).toBeUndefined() // no grade yet
+    await world.clock.advance(3_000)
+
+    expect(await endWords($, 2_100)).toBe('Easy task · Opus 5.5 at max effort')
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'task' })).toBeUndefined()
+    expect((await band.find({ key: 'switch' }))?.props.label).toBe('Continue on Haiku 5.5 at low effort')
+    await band.unmount()
   })
 
   test('a grade that comes after the person has moved on is dropped', async ($, on) => {
@@ -2274,5 +2551,1409 @@ describe('the last prompt outside the terminal', () => {
     await menu.press({ key: 'setting-lastPrompt' })
     expect((await menu.find({ key: 'setting-lastPrompt' }))?.text).toBe(`${'In VS Code'.padEnd(24)}Off`)
     await menu.unmount()
+  })
+})
+
+describe('notes', () => {
+  const NOTES = 'companion-notes'
+  const AT = 1_700_000_000_000
+  const stored = (id: string, text: string, at = AT, root = '/work/parser') => ({ id, text, at, root })
+  const run = ($: Engine, command: string, args = '') => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: PRESENTATION })
+  const mountNotes = ($: Engine, surface: RenderSurface) => $.ui.mount({ ...SETTINGS_MOUNT, requestId: NOTES, surface })
+  const labels = async (pane: Drawn, keys: readonly string[]) => {
+    const out: string[] = []
+    for (const key of keys) {
+      const found = await pane.find({ key })
+      if (found !== undefined) out.push(typeof found.props.label === 'string' ? found.props.label : found.text)
+    }
+    return out
+  }
+
+  test('/note keeps a message for later, once, and says how many are kept', async ($, on) => {
+    engine(on, ['terminal'])
+
+    const first = await run($, 'note', 'run the   parser tests\nagain')
+    expect(first.text).toBe('Kept: run the parser tests again (1 note, /notes opens them)')
+    expect((await run($, 'note', 'run the parser tests again')).text).toBe('Already kept: run the parser tests again (1 note, /notes opens them)')
+    expect((await run($, 'note', 'check the changelog')).text).toBe('Kept: check the changelog (2 notes, /notes opens them)')
+  })
+
+  test('/notes opens the pane with the keys, newest first, numbered in the terminal', async ($, on) => {
+    const world = engine(on, ['terminal'], { notes: [stored('a', 'older note', AT), stored('b', 'newer note', AT + 5)] })
+
+    expect((await run($, 'notes')).text).toBe('Notes opened.')
+    expect(world.openedWith).toEqual([{ id: NOTES, title: 'Notes', focus: true, closeOnEscape: true, holdToasts: true, rows: 15 }])
+    const pane = await mountNotes($, 'terminal')
+    expect(await labels(pane, ['note-1', 'note-2'])).toEqual(['newer note', 'older note'])
+    expect((await pane.find({ key: 'note-1' }))?.props).toMatchObject({ plain: true, hotkey: '1' })
+    expect((await pane.find({ key: 'clear' }))?.props).toMatchObject({ plain: true, hotkey: '0' })
+    await pane.unmount()
+    // /note with nothing after it opens them too.
+    expect((await run($, 'note')).text).toBe('Notes opened.')
+  })
+
+  test('in the terminal each note shows whole, and the pane opens tall enough for the long ones', async ($, on) => {
+    const LONG = 'Clerk: paste the publishable key into the dashboard settings, save it, then run the sign-in flow again from a fresh browser profile and check that the redirect lands on the game page'
+    const notes = [stored('a', LONG, AT), ...Array.from({ length: 8 }, (_, i) => stored(`n${i}`, `${LONG} (${i})`, AT + 1 + i))]
+    const world = engine(on, ['terminal'], { notes })
+    await hintSite($) // the terminal draws the line under the prompt box: 120 columns
+    expect((await run($, 'notes')).text).toBe('Notes opened.')
+    // At 120 columns a note takes two rows, so nine of them more than the 15 rows of short ones.
+    expect(world.openedWith.at(-1)?.rows).toBe(notesRows(notes, 120))
+    expect(notesRows(notes, 120)).toBe(1 + 9 * 2 + 2 + 2)
+    const pane = await mountNotes($, 'terminal')
+    expect(await labels(pane, ['note-9'])).toEqual([LONG])
+    await pane.unmount()
+    // Wrapped as the terminal wraps: word by word, a word wider than the row split.
+    expect([wrappedRows('', 10), wrappedRows('aaa bbb ccc', 7), wrappedRows('a'.repeat(25), 10), wrappedRows(`${'a'.repeat(25)} bb`, 10)]).toEqual([1, 2, 3, 3])
+    // Short notes keep the pane at its 15 rows.
+    expect(notesRows([stored('s', 'short note')], 120)).toBe(15)
+  })
+
+  test('with no notes the pane says how to keep one', async ($, on) => {
+    engine(on, ['terminal'])
+    await run($, 'notes')
+
+    const pane = await mountNotes($, 'terminal')
+    expect((await pane.find({ type: 'Text' }))?.text).toContain('No notes yet. Copy words from an answer and run /note')
+    await pane.unmount()
+  })
+
+  test('/save-next keeps a suggested message; a number picks which, and a wrong one lists them', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    expect((await run($, 'save-next')).text).toBe('No suggestion yet: they come with the next answer.')
+
+    await $.prompt.submit({ text: 'merge the parser work', wait: false, origin: { kind: 'composer' } })
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+
+    expect((await run($, 'save-next', '2')).text).toBe(`Kept: ${CHOICES[1]} (1 note, /notes opens them)`)
+    expect((await run($, 'save-next')).text).toBe(`Kept: ${CHOICES[0]} (2 notes, /notes opens them)`)
+    expect((await run($, 'save-next', '9')).text).toContain('Pick 1 to 3.')
+  })
+
+  test('notes belong to the project folder, and come back when the session does', async ($, on) => {
+    const world = engine(on, ['terminal'])
+
+    await run($, 'note', 'only for the parser')
+    world.root = '/work/game'
+    expect((await run($, 'note', 'only for the game')).text).toContain('(1 note,')
+    await run($, 'notes')
+    let pane = await mountNotes($, 'terminal')
+    expect(await labels(pane, ['note-1', 'note-2'])).toEqual(['only for the game'])
+    await pane.unmount()
+
+    world.root = '/work/parser'
+    await run($, 'notes')
+    pane = await mountNotes($, 'terminal')
+    expect(await labels(pane, ['note-1', 'note-2'])).toEqual(['only for the parser'])
+    await pane.unmount()
+  })
+
+  test('taking a note keeps it: the words go to the prompt box, the pane closes, and the note stays', async ($, on) => {
+    const world = engine(on, ['terminal'], { notes: [stored('a', 'first note', AT), stored('b', 'second note', AT + 5)] })
+    await run($, 'notes')
+
+    const pane = await mountNotes($, 'terminal')
+    await pane.press({ key: 'note-1' }) // the newest, "second note"
+    expect(world.box).toBe('second note')
+    expect(world.closed).toEqual([NOTES])
+    await pane.unmount()
+
+    await run($, 'notes')
+    const again = await mountNotes($, 'terminal')
+    expect(await labels(again, ['note-1', 'note-2'])).toEqual(['second note', 'first note'])
+    await again.unmount()
+  })
+
+  test('outside the terminal each note is a quiet button that stays when taken; the cross removes it', async ($, on) => {
+    const world = engine(on, ['vscode'], { notes: [stored('a', 'first note', AT), stored('b', 'second note', AT + 5)] })
+    await run($, 'notes')
+
+    const pane = await mountNotes($, 'vscode')
+    expect((await pane.find({ key: 'note-b' }))?.props).toMatchObject({ plain: true, dimColor: true, label: 'second note' })
+    expect((await pane.find({ key: 'note-b' }))?.text).toBe('↳ second note')
+    await pane.press({ key: 'drop-b' })
+    await pane.redraw()
+    expect(await pane.find({ key: 'note-b' })).toBeUndefined()
+    expect(world.box).toBe('') // removed, not taken
+    await pane.press({ key: 'note-a' })
+    expect(world.box).toBe('first note')
+    await pane.redraw()
+    expect(await pane.find({ key: 'note-a' })).toBeDefined()
+    await pane.unmount()
+  })
+
+  test('x lists the notes to remove one by its number, and n goes back', async ($, on) => {
+    engine(on, ['terminal'], { notes: [stored('a', 'first note', AT), stored('b', 'second note', AT + 5)] })
+    await run($, 'notes')
+
+    const pane = await mountNotes($, 'terminal')
+    expect((await pane.find({ key: 'remove' }))?.props).toMatchObject({ plain: true, hotkey: 'x' })
+    await pane.press({ key: 'remove' })
+    await pane.redraw()
+    expect(await labels(pane, ['remove-1', 'remove-2'])).toEqual(['second note', 'first note'])
+    await pane.press({ key: 'remove-1' })
+    await pane.redraw()
+    expect(await labels(pane, ['note-1', 'note-2'])).toEqual(['first note']) // back on the list, one gone
+
+    await pane.press({ key: 'remove' })
+    await pane.redraw()
+    await pane.press({ key: 'back' })
+    await pane.redraw()
+    expect(await labels(pane, ['note-1', 'note-2'])).toEqual(['first note'])
+    await pane.unmount()
+  })
+
+  test('0 asks before clearing: n keeps every note, y clears this project and leaves the others', async ($, on) => {
+    const world = engine(on, ['terminal'], { notes: [stored('a', 'mine'), stored('b', 'mine too', AT + 1), stored('c', 'another project', AT, '/work/game')] })
+    await run($, 'notes')
+
+    const pane = await mountNotes($, 'terminal')
+    await pane.press({ key: 'clear' })
+    await pane.redraw()
+    expect((await pane.find({ type: 'Text' }))?.text).toBe('Clear all 2 notes for this project?')
+    expect((await pane.find({ key: 'yes' }))?.props).toMatchObject({ plain: true, hotkey: 'y' })
+    expect((await pane.find({ key: 'no' }))?.props).toMatchObject({ plain: true, hotkey: 'n' })
+    await pane.press({ key: 'no' })
+    await pane.redraw()
+    expect(await labels(pane, ['note-1', 'note-2'])).toEqual(['mine too', 'mine'])
+
+    await pane.press({ key: 'clear' })
+    await pane.redraw()
+    await pane.press({ key: 'yes' })
+    await pane.redraw()
+    expect((await pane.find({ type: 'Text' }))?.text).toContain('No notes yet')
+    await pane.unmount()
+    expect((await run($, 'notes', 'clear')).text).toBe('No notes to clear.')
+
+    // The other project's note is still there.
+    world.root = '/work/game'
+    await run($, 'notes')
+    const other = await mountNotes($, 'terminal')
+    expect(await labels(other, ['note-1', 'note-2'])).toEqual(['another project'])
+    await other.unmount()
+  })
+
+  test('/notes clear asks in the pane first', async ($, on) => {
+    engine(on, ['vscode'], { notes: [stored('a', 'one'), stored('b', 'two', AT + 1)] })
+    expect((await run($, 'notes', 'clear')).text).toBe('Clear all 2 notes? Answer in the Notes pane.')
+
+    const pane = await mountNotes($, 'vscode')
+    expect((await pane.find({ type: 'Text' }))?.text).toBe('Clear all 2 notes for this project?')
+    await pane.press({ key: 'yes' })
+    await pane.redraw()
+    expect((await pane.find({ type: 'Text' }))?.text).toContain('No notes yet')
+    await pane.unmount()
+  })
+
+  test('where no pane draws, /notes clear clears at once and says how many', async ($, on) => {
+    engine(on, NOTHING_DRAWS, { notes: [stored('a', 'one'), stored('b', 'two', AT + 1)] })
+    expect((await run($, 'notes', 'clear')).text).toBe('Cleared 2 notes for this project.')
+  })
+
+  test('a project holds 50 notes, and the 51st says so', async ($, on) => {
+    const many = Array.from({ length: 50 }, (_, i) => stored(`n${i}`, `note ${i}`, AT + i))
+    engine(on, ['terminal'], { notes: many })
+
+    expect((await run($, 'note', 'one more')).text).toBe('Notes are full (50 for this project): take or clear one first with /notes.')
+    expect((await run($, 'note', 'note 7')).text).toContain('Already kept')
+  })
+
+  test('a store holding anything but notes is read as none, and a long note is cut where it is kept', async ($, on) => {
+    engine(on, ['terminal'], { notes: [1, 'x', null, { id: 1 }, { id: 'a', text: 'ok', at: 'now', root: '/work/parser' }] })
+    expect((await run($, 'notes', 'clear')).text).toBe('No notes to clear.')
+    const long = 'word '.repeat(200)
+    const kept = (await run($, 'note', long)).text ?? ''
+    expect(kept.length).toBeLessThan(140)
+    await run($, 'notes')
+    const pane = await mountNotes($, 'terminal')
+    // Kept at 500 characters, and shown whole: the pane wraps it.
+    expect(((await pane.find({ key: 'note-1' }))?.props.label as string).length).toBe(500)
+    await pane.unmount()
+  })
+
+  test('where no surface draws a pane, /notes answers with the notes as numbered lines', async ($, on) => {
+    engine(on, NOTHING_DRAWS, { notes: [stored('a', 'older note', AT), stored('b', 'newer note', AT + 5)] })
+
+    expect((await run($, 'notes')).text).toBe('1. newer note\n2. older note\nNo panel draws here: run /notes in VS Code or the terminal to take one.')
+  })
+
+  test('/notes export writes the project’s notes, newest first with their day, to NOTES.md, and writes it again next time', async ($, on) => {
+    const DAY = 86_400_000
+    const world = engine(on, ['terminal'], { notes: [stored('a', 'older note', AT), stored('b', 'newer note', AT + DAY), stored('c', 'another project', AT, '/work/game')] })
+
+    expect((await run($, 'notes', 'export')).text).toBe('Wrote 2 notes to NOTES.md.')
+    expect(world.written).toEqual([
+      {
+        path: '/work/parser/NOTES.md',
+        text: [
+          '<!-- Written by Companion’s /notes export; the next export writes it again. -->',
+          '',
+          '# Notes',
+          '',
+          'Kept with Companion in this project, newest first.',
+          '',
+          '- newer note (2023-11-15)',
+          '- older note (2023-11-14)',
+          '',
+        ].join('\n'),
+      },
+    ])
+    await run($, 'note', 'a third note')
+    expect((await run($, 'notes', 'export')).text).toBe('Wrote 3 notes to NOTES.md.') // its own file, written again
+    expect(world.written).toHaveLength(2)
+    expect(world.written[1]?.text).toContain('- a third note (')
+  })
+
+  test('/notes export leaves a NOTES.md it did not write alone, writes another file named, and never outside the project', async ($, on) => {
+    const world = engine(on, ['terminal'], { notes: [stored('a', 'a note')], files: { '/work/parser/NOTES.md': '# My own notes\n' } })
+
+    expect((await run($, 'notes', 'export')).text).toBe('NOTES.md is already there and /notes export did not write it, so it was left alone. /notes export <file> writes somewhere else.')
+    expect(world.written).toEqual([])
+    expect((await run($, 'notes', 'export docs/companion-notes.md')).text).toBe('Wrote 1 note to docs/companion-notes.md.')
+    expect(world.written.map(file => file.path)).toEqual(['/work/parser/docs/companion-notes.md'])
+    for (const outside of ['../elsewhere.md', 'docs/../../up.md', 'C:/notes.md', '/etc/notes.md', '~/notes.md']) {
+      expect((await run($, 'notes', `export ${outside}`)).text).toBe(`Notes are written inside this project: ${outside} is outside it.`)
+    }
+    expect(world.written).toHaveLength(1)
+  })
+
+  test('/notes export with no notes writes nothing', async ($, on) => {
+    const world = engine(on, ['terminal'])
+    expect((await run($, 'notes', 'export')).text).toBe('No notes to export yet.')
+    expect(world.written).toEqual([])
+  })
+})
+
+describe('copy the last answer', () => {
+  const ANSWER = '## Plan\n\n- **Cache** tokens by `hash`\n- Read in chunks'
+  const answerTurn = async ($: Engine, world: World, answer = ANSWER) => {
+    await $.prompt.submit({ text: 'plan the parser work', wait: false, origin: { kind: 'composer' } })
+    await $.turn.complete({ answer, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+  }
+
+  test('7: Copy answer, first on the keys line once an answer is in, copies it as written and says how long it was', async ($, on) => {
+    const world = engine(on, ['terminal', 'vscode'], { showsSuggestions: false, stored: { lastPrompt: true } })
+    await $.prompt.submit({ text: 'plan the parser work', wait: false, origin: { kind: 'composer' } })
+    let band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'copyKey' })).toBeUndefined() // nothing answered yet
+    await band.unmount()
+
+    // An earlier answer, then the one to copy: the last is the one copied.
+    await $.turn.complete({ answer: 'An earlier answer.', durationMs: 5, isAborted: false, turnId: 't0', reason: 'answer' })
+    await $.turn.complete({ answer: ANSWER, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    band = await $.ui.mount({ ...WIDE_BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'copyKey' }))?.props).toMatchObject({ label: 'Copy answer', plain: true, hotkey: '7' })
+    expect((await hintSite($)).keys).toMatch(/Copy answer.*View queue.*View notes/)
+    await band.press({ key: 'copyKey' })
+    expect(world.copied).toEqual([ANSWER]) // the Markdown, marks and all
+    expect(world.toasts.at(-1)).toBe(`Copied the last answer (${ANSWER.length} characters).`)
+    await band.unmount()
+
+    const vscode = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    expect(await vscode.find({ key: 'copyKey' })).toBeUndefined()
+    await vscode.unmount()
+  })
+
+  test('where the surface takes no copy, the machine’s clipboard does', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, copyFails: true })
+    await answerTurn($, world)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await band.press({ key: 'copyKey' })
+    await band.unmount()
+    expect(world.copied).toEqual([])
+    expect(world.ran.at(-1)?.join(' ')).toContain('Set-Clipboard')
+    expect(world.toasts.at(-1)).toBe(`Copied the last answer (${ANSWER.length} characters).`)
+  })
+})
+
+describe('notes from an answer', () => {
+  const NOTES = 'companion-notes'
+  // An answer as the model writes it: a paragraph, a list, code, a table and a heading.
+  const ANSWER = [
+    'The parser keeps a cache of tokens. It resets on save!',
+    '',
+    '## Why it matters',
+    '',
+    '- **Speed:** a warm cache halves the parse time.',
+    '- Run `npm test` before the release.',
+    '',
+    '```sh',
+    'npm test -- --watch',
+    '```',
+    '',
+    '| Step | Time |',
+    '| --- | --- |',
+    '| Parse | 2 s |',
+    '',
+    'See [the docs](https://example.com/docs) for more. Ok.',
+  ].join('\n')
+  const LINES = [
+    'The parser keeps a cache of tokens.',
+    'It resets on save!',
+    'Speed: a warm cache halves the parse time.',
+    'Run npm test before the release.',
+    'See the docs for more.',
+  ]
+  const FULLSCREEN = { columns: 100, rows: 30, isFullscreen: true }
+  const MAIN_SCREEN = { columns: 100, rows: 30, isFullscreen: false }
+  const run = ($: Engine, command: string, args = '') => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: PRESENTATION })
+  const mountNotes = ($: Engine, surface: RenderSurface) => $.ui.mount({ ...SETTINGS_MOUNT, requestId: NOTES, surface })
+  let mounts = 0 // each answer row its own instance
+  const mountAnswer = ($: Engine, surface: RenderSurface, text: string, viewport = FULLSCREEN, extra: Record<string, unknown> = {}) => {
+    mounts += 1
+    return $.ui.mount({ plugin: PLUGIN, surface, component: 'AssistantMessage', requestId: `msg-${mounts}`, props: { text, isFirstOfReply: true, ...extra }, viewport })
+  }
+  const answerTurn = async ($: Engine, world: World, answer: string, turnId = 't1') => {
+    await $.prompt.submit({ text: 'how does the parser cache work?', wait: false, origin: { kind: 'composer' } })
+    await $.turn.complete({ answer, durationMs: 5, isAborted: false, turnId, reason: 'answer' })
+    await world.clock.advance(1)
+  }
+  const label = async (pane: Drawn, key: string) => {
+    const found = await pane.find({ key })
+    return typeof found?.props.label === 'string' ? found.props.label : undefined
+  }
+
+  test('an answer is cut into the lines worth keeping: sentences and list items, no code, table or heading', () => {
+    expect(linesOf(ANSWER)).toEqual(LINES)
+    expect(linesOf('Short. Too.\n\nThe same line again here.\nThe same line again here.')).toEqual(['The same line again here.'])
+    expect(linesOf('> A quoted line that stays in.')).toEqual(['A quoted line that stays in.'])
+    expect(linesOf('```\nonly code here\n```')).toEqual([])
+  })
+
+  test('"Add note" goes under a completed answer in the fullscreen terminal, and nowhere before it completes', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+
+    let row = await mountAnswer($, 'terminal', ANSWER)
+    expect(await row.find({ key: 'note' })).toBeUndefined() // still being written
+    await row.unmount()
+
+    await answerTurn($, world, ANSWER)
+    row = await mountAnswer($, 'terminal', ANSWER)
+    expect((await row.find({ key: 'note' }))?.props).toMatchObject({ label: 'Add note', plain: true, dimColor: true })
+    await row.unmount()
+  })
+
+  test('no "Add note" on the main screen, outside the terminal, on a summary, mid-answer, or with the setting off', async ($, on) => {
+    const world = engine(on, ['terminal', 'vscode'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world, ANSWER)
+
+    for (const row of [
+      await mountAnswer($, 'terminal', ANSWER, MAIN_SCREEN),
+      await mountAnswer($, 'vscode', ANSWER),
+      await mountAnswer($, 'terminal', ANSWER, FULLSCREEN, { isSummary: true }),
+      await mountAnswer($, 'terminal', 'Let me look at the parser first.'),
+    ]) {
+      expect(await row.find({ key: 'note' })).toBeUndefined()
+      await row.unmount()
+    }
+
+    // The last block of a longer answer counts: what the answer ends with.
+    const last = await mountAnswer($, 'terminal', 'See [the docs](https://example.com/docs) for more. Ok.')
+    expect(await last.find({ key: 'note' })).toBeDefined()
+    await last.unmount()
+
+    await run($, 'companion')
+    const menu = await $.ui.mount({ ...SETTINGS_MOUNT, surface: 'terminal' })
+    await menu.press({ key: 'setting-noteButton' })
+    await menu.unmount()
+    const off = await mountAnswer($, 'terminal', ANSWER)
+    expect(await off.find({ key: 'note' })).toBeUndefined()
+    await off.unmount()
+  })
+
+  test('"Add note" keeps what the person selected, and says so', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world, ANSWER)
+    world.selection = { text: '  a warm cache halves the parse time ', requestId: 'msg-1' }
+
+    const row = await mountAnswer($, 'terminal', ANSWER)
+    await row.press({ key: 'note' })
+    expect(world.toasts).toEqual(['Kept: a warm cache halves the parse time (1 note, /notes opens them)']) // a selection reads no clipboard
+    expect(world.opened).not.toContain(NOTES) // nothing to pick: the selection was it
+
+    // The engine still answers with the same selection until a command runs: kept once, it is not kept again.
+    await row.press({ key: 'note' })
+    expect(world.toasts.filter(toast => toast.startsWith('Kept'))).toHaveLength(1)
+    expect(world.opened).toContain(NOTES)
+    expect((await run($, 'note')).text).toBe('Pick the lines to keep from the last answer.')
+    // A new selection counts again, and so do the same words once the selection was gone in between.
+    world.selection = undefined
+    await run($, 'note')
+    world.selection = { text: 'a warm cache halves the parse time' }
+    expect((await run($, 'note')).text).toBe('Already kept: a warm cache halves the parse time (1 note, /notes opens them)')
+    await row.unmount()
+  })
+
+  test('"Add note" with nothing selected lists the answer: a number keeps a line, again drops it', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world, ANSWER)
+
+    const row = await mountAnswer($, 'terminal', ANSWER)
+    await row.press({ key: 'note' })
+    await row.unmount()
+    expect(world.opened).toContain(NOTES)
+
+    const pane = await mountNotes($, 'terminal')
+    expect(await label(pane, 'line-1')).toBe(`  ${LINES[0]}`)
+    expect((await pane.find({ key: 'line-2' }))?.props).toMatchObject({ plain: true, hotkey: '2' })
+    expect(await pane.find({ key: 'more' })).toBeUndefined() // five lines: one page
+    await pane.press({ key: 'line-2' })
+    await pane.redraw()
+    expect(await label(pane, 'line-2')).toBe(`✓ ${LINES[1]}`)
+    expect(await label(pane, 'yours')).toBe('Your notes (1)')
+    await pane.press({ key: 'line-2' })
+    await pane.redraw()
+    expect(await label(pane, 'line-2')).toBe(`  ${LINES[1]}`)
+    expect(await label(pane, 'yours')).toBe('Your notes (0)')
+
+    // n goes to the notes themselves.
+    await pane.press({ key: 'line-3' })
+    await pane.press({ key: 'yours' })
+    await pane.redraw()
+    expect(await label(pane, 'note-1')).toBe(LINES[2])
+    await pane.unmount()
+  })
+
+  test('a long answer pages nine lines at a time, m turning the page', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    const long = Array.from({ length: 12 }, (_, i) => `Line number ${i + 1} of the long answer.`).join(' ')
+    await answerTurn($, world, long)
+
+    expect((await run($, 'note')).text).toBe('Pick the lines to keep from the last answer.')
+    const pane = await mountNotes($, 'terminal')
+    expect(await label(pane, 'line-9')).toBe('  Line number 9 of the long answer.')
+    expect(await label(pane, 'more')).toBe('More lines (1 of 2)')
+    await pane.press({ key: 'more' })
+    await pane.redraw()
+    expect(await label(pane, 'line-1')).toBe('  Line number 10 of the long answer.')
+    expect(await pane.find({ key: 'line-4' })).toBeUndefined()
+    await pane.press({ key: 'more' })
+    await pane.redraw()
+    expect(await label(pane, 'line-1')).toBe('  Line number 1 of the long answer.')
+    await pane.unmount()
+  })
+
+  test('/note on its own keeps the selection, else lists the last answer, else opens the notes', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    expect((await run($, 'note')).text).toBe('Notes opened.') // no answer yet
+
+    await answerTurn($, world, ANSWER)
+    world.selection = { text: 'It resets on save' }
+    expect((await run($, 'note')).text).toBe('Kept: It resets on save (1 note, /notes opens them)')
+
+    world.selection = undefined
+    expect((await run($, 'note')).text).toBe('Pick the lines to keep from the last answer.')
+    // The latest answer is the one listed.
+    await answerTurn($, world, 'A second answer, about the release notes. It ships on Friday.', 't2')
+    await run($, 'note')
+    const pane = await mountNotes($, 'terminal')
+    expect(await label(pane, 'line-1')).toBe('  A second answer, about the release notes.')
+    await pane.unmount()
+
+    // /notes always opens the notes themselves.
+    await run($, 'notes')
+    const list = await mountNotes($, 'terminal')
+    expect(await label(list, 'note-1')).toBe('It resets on save')
+    await list.unmount()
+  })
+
+  test('outside the terminal the picker shows every line as a quiet button, + to keep and ✓ once kept', async ($, on) => {
+    const world = engine(on, ['vscode'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world, ANSWER)
+    await run($, 'note')
+
+    const pane = await mountNotes($, 'vscode')
+    expect((await pane.find({ key: 'line-1' }))?.props).toMatchObject({ plain: true, dimColor: true, label: LINES[0] })
+    expect((await pane.find({ key: 'line-5' }))?.text).toBe(`+ ${LINES[4]}`)
+    await pane.press({ key: 'line-5' })
+    await pane.redraw()
+    expect((await pane.find({ key: 'line-5' }))?.text).toBe(`✓ ${LINES[4]}`)
+    await pane.unmount()
+  })
+})
+
+describe('copy, then 9', () => {
+  const NOTES = 'companion-notes'
+  const ANSWER = 'The parser keeps a cache of tokens. It resets on save!\n\n- **Speed:** a warm cache halves the parse time.\n- Run `npm test` before the release.'
+  const run = ($: Engine, command: string, args = '') => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: PRESENTATION })
+  const mountNotes = ($: Engine, surface: RenderSurface) => $.ui.mount({ ...SETTINGS_MOUNT, requestId: NOTES, surface })
+  const answerTurn = async ($: Engine, world: World, answer: string) => {
+    await $.prompt.submit({ text: 'how does the parser cache work?', wait: false, origin: { kind: 'composer' } })
+    await $.turn.complete({ answer, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+  }
+  const label = async (pane: Drawn, key: string) => {
+    const found = await pane.find({ key })
+    return typeof found?.props.label === 'string' ? found.props.label : undefined
+  }
+
+  test('copied text loses the marks the terminal draws, and counts only when an answer holds its words', () => {
+    expect(cleanCopy('● The parser keeps a cache of tokens.\n  It resets on save!')).toBe('The parser keeps a cache of tokens. It resets on save!')
+    expect(cleanCopy('- Speed: a warm cache\r\n  halves the parse time.\r\n')).toBe('Speed: a warm cache halves the parse time.')
+    expect(isFromAnswers([ANSWER], 'Speed: a warm cache halves')).toBe(true) // the bold and the dash are gone, as on screen
+    expect(isFromAnswers([ANSWER], 'run NPM TEST before')).toBe(true) // in any case
+    expect(isFromAnswers([ANSWER], 'hunter2 is my password')).toBe(false)
+    expect(isFromAnswers([ANSWER], 'the')).toBe(false) // too short to tell
+  })
+
+  test('the band offers 9: Notes on the terminal once an answer is in, and nowhere else', async ($, on) => {
+    // The prompt quote on in VS Code, so its band draws there too.
+    const world = engine(on, ['terminal', 'vscode'], { showsSuggestions: false, stored: { suggest: false, lastPrompt: true } })
+    await $.prompt.submit({ text: 'how does the parser cache work?', wait: false, origin: { kind: 'composer' } })
+    let band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'noteKey' })).toBeUndefined() // nothing answered yet
+    await band.unmount()
+
+    await $.turn.complete({ answer: ANSWER, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    band = await $.ui.mount({ ...WIDE_BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'noteKey' }))?.props).toMatchObject({ label: 'View notes', plain: true, hotkey: '9' })
+    await band.unmount()
+    expect(await hintLine($)).toContain('Copy text, then /queue to queue or /note to note')
+
+    const vscode = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    expect(await vscode.find({ key: 'prompt' })).toBeDefined() // the band is drawn there
+    expect(await vscode.find({ key: 'noteKey' })).toBeUndefined()
+    await vscode.unmount()
+  })
+
+  test('/note keeps what was copied from an answer, once; anything else, or nothing new, lists the lines; 9 opens the notes', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world, ANSWER)
+
+    world.hostClipboard = '- Speed: a warm cache\r\n  halves the parse time.\r\n'
+    expect((await run($, 'note')).text).toBe('Kept: Speed: a warm cache halves the parse time. (1 note, /notes opens them)')
+    expect(world.opened).not.toContain(NOTES)
+
+    // Still on the clipboard and kept already: /note lists the answer's lines instead.
+    expect((await run($, 'note')).text).toBe('Pick the lines to keep from the last answer.')
+    const picker = await mountNotes($, 'terminal')
+    expect(await label(picker, 'line-1')).toBe('  The parser keeps a cache of tokens.')
+    await picker.unmount()
+
+    // Text from anywhere else is never kept.
+    world.hostClipboard = 'hunter2 is my password'
+    expect((await run($, 'note')).text).toBe('Pick the lines to keep from the last answer.')
+
+    // 9 opens the notes themselves, whatever view the pane was left in.
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await band.press({ key: 'noteKey' })
+    await band.unmount()
+    expect(world.openedWith.at(-1)).toMatchObject({ id: NOTES, focus: true })
+    const list = await mountNotes($, 'terminal')
+    expect(await label(list, 'note-1')).toBe('Speed: a warm cache halves the parse time.')
+    expect(await list.find({ key: 'note-2' })).toBeUndefined()
+    await list.unmount()
+  })
+
+  test('/note on its own keeps what was copied from an answer, read through Get-Clipboard on Windows', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world, ANSWER)
+    world.hostClipboard = 'Run npm test before the release.'
+
+    expect((await run($, 'note')).text).toBe('Kept: Run npm test before the release. (1 note, /notes opens them)')
+    expect(world.ran.at(-1)?.join(' ')).toContain('Get-Clipboard -Raw')
+  })
+
+  test('without PowerShell 7 the clipboard is read by Windows PowerShell, which goes first from then on', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false }, missing: ['pwsh.exe'] })
+    await answerTurn($, world, ANSWER)
+    world.hostClipboard = 'Run npm test before the release.'
+
+    expect((await run($, 'note')).text).toBe('Kept: Run npm test before the release. (1 note, /notes opens them)')
+    expect(world.ran.map(argv => argv[0])).toEqual(['pwsh.exe', 'powershell.exe'])
+    world.hostClipboard = 'The parser keeps a cache of tokens.'
+    await run($, 'note')
+    expect(world.ran.map(argv => argv[0])).toEqual(['pwsh.exe', 'powershell.exe', 'powershell.exe'])
+  })
+
+  test('with the setting off the band has no 9', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false, noteButton: false } })
+    await answerTurn($, world, ANSWER)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ key: 'noteKey' })).toBeUndefined()
+    expect(await band.find({ key: 'queueKey' })).toBeUndefined()
+    expect(await band.find({ key: 'copyKey' })).toBeUndefined()
+    await band.unmount()
+  })
+})
+
+describe('the queue', () => {
+  // A finished task's answer with follow-ups worth doing, one at a time.
+  const ANSWER = 'Done: big files load 3× faster, and the tests pass.\n\nStill worth doing:\n\n- Cache tokens by the file’s hash.\n- Read the file in chunks.\n- Add a benchmark that fails above 3 s.'
+  const CACHE = 'Cache tokens by the file’s hash.'
+  const CHUNKS = 'Read the file in chunks.'
+  const BENCH = 'Add a benchmark that fails above 3 s.'
+  const NOTHING = 'Nothing copied from an answer: select words in one of Claude’s answers, copy them, then run /queue again.'
+  const EMPTY = 'Nothing queued. Copy words from an answer and run /queue, or /queue <text>.'
+  const QUEUE = 'companion-queue'
+  const run =($: Engine, command: string, args = '') => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: PRESENTATION })
+  const answerTurn = async ($: Engine, world: World, turnId = 't1') => {
+    await $.prompt.submit({ text: 'speed up the parser for big files', wait: false, origin: { kind: 'composer' } })
+    await $.turn.complete({ answer: ANSWER, durationMs: 5, isAborted: false, turnId, reason: 'answer' })
+    await world.clock.advance(1)
+  }
+  const label = async (band: Drawn, key: string) => {
+    const found = await band.find({ key })
+    return typeof found?.props.label === 'string' ? found.props.label : undefined
+  }
+  /** The person copies `text` and queues it: /queue on its own, as a key bound to it (Alt+Q) runs it. */
+  const queueCopy = async ($: Engine, world: World, text: string) => {
+    world.hostClipboard = text
+    return (await run($, 'queue')).text
+  }
+
+  test('the band offers 8: Queue and 9: Notes once an answer is in, on the terminal alone, and says how to fill them', async ($, on) => {
+    const world = engine(on, ['terminal', 'vscode'], { showsSuggestions: false, stored: { suggest: false, lastPrompt: true } })
+    await answerTurn($, world)
+
+    const band = await $.ui.mount({ ...WIDE_BAND, surface: 'terminal' })
+    expect((await band.find({ key: 'queueKey' }))?.props).toMatchObject({ label: 'View queue', plain: true, hotkey: '8' })
+    expect((await band.find({ key: 'noteKey' }))?.props).toMatchObject({ label: 'View notes', plain: true, hotkey: '9' })
+    await band.unmount()
+    expect(await hintLine($)).toContain('Copy text, then /queue to queue or /note to note')
+    expect(await footerLine($)).toBe('focus') // nothing queued yet
+
+    const vscode = await $.ui.mount({ ...BAND, surface: 'vscode' })
+    expect(await vscode.find({ key: 'queueKey' })).toBeUndefined()
+    await vscode.unmount()
+  })
+
+  test('the hints name the keys the keybindings file binds to /queue and /note', async ($, on) => {
+    const keybindings = JSON.stringify({ bindings: [{ context: 'Chat', bindings: { 'ctrl+e': 'chat:externalEditor', 'alt+q': 'command:queue', 'meta+n': 'command:note' } }] })
+    const world = engine(on, ['terminal'], { showsSuggestions: false, keybindings })
+    await answerTurn($, world) // the answer's end reads the file afresh
+    expect(await hintLine($)).toBe('new here? /companion-setup\nCopy text, then Alt+Q to queue or Alt+N to note')
+    expect((await run($, 'queue', 'list')).text).toBe('Nothing queued. Copy words from an answer and press Alt+Q, or /queue <text>.')
+
+    expect(keyName('ctrl+shift+k')).toBe('Ctrl+Shift+K')
+    expect(keyName('ctrl+k ctrl+q')).toBe('Ctrl+K Ctrl+Q')
+    expect(keyName('option+q')).toBe('Alt+Q')
+  })
+
+  test('a keybindings file that is not JSON names no key', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, keybindings: '{ not json' })
+    await answerTurn($, world)
+    expect((await run($, 'queue', 'list')).text).toBe(EMPTY)
+  })
+
+  test('a key bound to /queue where the prompt box does not take it is not named', async ($, on) => {
+    const keybindings = JSON.stringify({ bindings: [{ context: 'Transcript', bindings: { 'alt+q': 'command:queue' } }] })
+    const world = engine(on, ['terminal'], { showsSuggestions: false, keybindings })
+    await answerTurn($, world)
+    expect((await run($, 'queue', 'list')).text).toBe(EMPTY)
+  })
+
+  test('/queue on its own (Alt+Q where bound) queues a new copy from an answer, once; anything else, or a stale copy, is not queued', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    expect(await queueCopy($, world, CACHE)).toBe(NOTHING) // nothing answered yet: the clipboard is not read
+    expect(world.ran).toEqual([])
+    await answerTurn($, world)
+
+    expect(await queueCopy($, world, '- Cache tokens by the file’s hash.\r\n')).toBe(`Queued: ${CACHE} (1 in the queue, 8 to view)`)
+    expect(await queueCopy($, world, CACHE)).toBe(`Already queued: ${CACHE} (1 in the queue, 8 to view)`) // still on the clipboard
+    expect(await queueCopy($, world, 'hunter2 is my password')).toBe(NOTHING) // never queued, nor shown
+    expect(await queueCopy($, world, '')).toBe(NOTHING)
+    expect(world.opened).toEqual([]) // queueing never opens the list
+
+    // Sent or taken off, the words still on the clipboard are not queued again; a new copy is.
+    await run($, 'queue', 'clear')
+    expect(await queueCopy($, world, CACHE)).toBe(NOTHING)
+    expect((await run($, 'queue', 'list')).text).toBe(EMPTY)
+    expect(await queueCopy($, world, BENCH)).toBe(`Queued: ${BENCH} (1 in the queue, 8 to view)`)
+  })
+
+  test('a selection is queued as it is, with no clipboard read', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world)
+    world.selection = { text: '  Read the file in chunks. ' }
+    expect((await run($, 'queue')).text).toBe(`Queued: ${CHUNKS} (1 in the queue, 8 to view)`)
+    expect(world.ran).toEqual([])
+  })
+
+  test('8 opens the queue as a list, never reading the clipboard; with nothing queued it says how to queue', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await band.press({ key: 'queueKey' })
+    expect(world.toasts.at(-1)).toBe(EMPTY)
+    expect(world.opened).toEqual([])
+
+    await queueCopy($, world, CACHE)
+    await band.press({ key: 'queueKey' })
+    expect(world.opened).toEqual([QUEUE])
+    expect(world.ran).toHaveLength(1) // the /queue's read alone
+    await band.unmount()
+  })
+
+  test('the list 8 opens takes the keys: no numbers, Enter takes an action, t moves one to the top, x takes one off', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    for (const text of [CACHE, CHUNKS, BENCH]) await run($, 'queue', text)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    // Actions wait, though nothing was answered yet: 8 and 9 are offered.
+    expect(await band.find({ key: 'queueKey' })).toBeDefined()
+    expect(await band.find({ key: 'noteKey' })).toBeDefined()
+    expect(await band.find({ key: 'copyKey' })).toBeUndefined() // no answer to copy yet
+    await band.press({ key: 'queueKey' })
+    await band.unmount()
+    expect(world.openedWith).toEqual([{ id: QUEUE, title: 'Queue', focus: true, closeOnEscape: true, holdToasts: true, rows: 8 }])
+
+    const list = await $.ui.mount({ ...SETTINGS_MOUNT, requestId: QUEUE, surface: 'terminal' })
+    expect((await list.find({ key: 'title' }))?.text).toBe('Queue · ↑↓ to pick · Enter takes it · t to the top · x takes it off · Esc closes')
+    expect([await label(list, 'queued-1'), await label(list, 'queued-2'), await label(list, 'queued-3')]).toEqual([CACHE, CHUNKS, BENCH])
+    expect((await list.find({ key: 'queued-1' }))?.props.hotkey).toBeUndefined()
+    expect((await list.find({ key: 'top' }))?.props).toMatchObject({ plain: true, hotkey: 't' })
+    expect((await list.find({ key: 'drop' }))?.props).toMatchObject({ plain: true, hotkey: 'x' })
+
+    // x before the ring moves: the next one comes off.
+    await list.press({ key: 'drop' })
+    expect((await run($, 'queue', 'list')).text).toBe(`1. ${CHUNKS}\n2. ${BENCH}`)
+    // The ring on the second row: t moves it to the top, and the ring goes with it.
+    await $.ui.focus({ component: 'Pane', requestId: QUEUE, plugin: PLUGIN, element: 'queued-2', origin: { kind: 'person' } })
+    await list.press({ key: 'top' })
+    expect((await run($, 'queue', 'list')).text).toBe(`1. ${BENCH}\n2. ${CHUNKS}`)
+    await $.ui.focus({ component: 'Pane', requestId: QUEUE, plugin: PLUGIN, element: 'queued-2', origin: { kind: 'person' } })
+    await list.press({ key: 'drop' })
+    expect((await run($, 'queue', 'list')).text).toBe(`1. ${BENCH}`)
+
+    // Enter on a row: the list closes and the action waits in the prompt box; sent, it leaves the queue.
+    await list.redraw()
+    await list.press({ key: 'queued-1' })
+    expect(world.closed).toEqual([QUEUE])
+    expect(world.box).toBe(BENCH)
+    await list.unmount()
+    await typed($, BENCH)
+    expect((await run($, 'queue', 'list')).text).toBe(EMPTY)
+  })
+
+  test('the last action taken off in the list closes it', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await run($, 'queue', CACHE)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    await band.press({ key: 'queueKey' })
+    await band.unmount()
+
+    const list = await $.ui.mount({ ...SETTINGS_MOUNT, requestId: QUEUE, surface: 'terminal' })
+    await list.press({ key: 'drop' })
+    expect(world.closed).toEqual([QUEUE])
+    await list.redraw()
+    expect(await list.find({ key: 'queued-1' })).toBeUndefined()
+    await list.unmount()
+  })
+
+  test('the band keeps the choices, the footer counts the queue, and the next one is the grey text Tab takes', async ($, on) => {
+    const world = engine(on, ['terminal'])
+    await answerTurn($, world)
+    expect(world.offered).toEqual([CHOICES[0]])
+
+    await queueCopy($, world, CACHE)
+    await queueCopy($, world, BENCH)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await choicesDrawn(band)).toEqual([...CHOICES])
+    expect(await band.find({ key: 'queue' })).toBeUndefined() // the queue is not drawn in the band
+    await band.unmount()
+    expect(await footerLine($)).toBe('focus & 2 queued')
+    expect(await footerLine($, 'desktop')).toBe('focus') // the terminal alone, where 8 opens it
+    // The first action queued took the grey text from the likeliest choice; the second, behind it, changed nothing.
+    expect(world.offered).toEqual([CHOICES[0], CACHE])
+  })
+
+  test('in the list, a move or a removal of the next one changes the grey text; the last one gone, the choice is back', async ($, on) => {
+    const world = engine(on, ['terminal'])
+    await answerTurn($, world)
+    for (const text of [CACHE, CHUNKS, BENCH]) await queueCopy($, world, text)
+    const list = await $.ui.mount({ ...SETTINGS_MOUNT, requestId: QUEUE, surface: 'terminal' })
+    const ringOn = (element: string) => $.ui.focus({ component: 'Pane', requestId: QUEUE, plugin: PLUGIN, element, origin: { kind: 'person' } })
+
+    await ringOn('queued-3')
+    await list.press({ key: 'top' })
+    expect((await run($, 'queue', 'list')).text).toBe(`1. ${BENCH}\n2. ${CACHE}\n3. ${CHUNKS}`)
+    expect(world.offered.at(-1)).toBe(BENCH)
+    await ringOn('queued-1')
+    await list.press({ key: 'top' })
+    expect(world.toasts.at(-1)).toBe('Already the next one: Tab takes it into the prompt box.')
+
+    await list.press({ key: 'drop' })
+    expect(world.offered.at(-1)).toBe(CACHE)
+    const offers = world.offered.length
+    await ringOn('queued-2')
+    await list.press({ key: 'drop' }) // not the next one: the grey text stays
+    expect(world.offered.length).toBe(offers)
+    await ringOn('queued-1')
+    await list.press({ key: 'drop' })
+    expect(world.offered.at(-1)).toBe(CHOICES[0])
+    expect(await footerLine($)).toBe('focus')
+    expect(world.submitted).toEqual(['speed up the parser for big files']) // nothing was sent
+    await list.unmount()
+  })
+
+  test('a sent prompt that is a queued action leaves the queue, with more words after it or none; others leave it be', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await answerTurn($, world)
+    for (const text of [CACHE, CHUNKS, BENCH]) await queueCopy($, world, text)
+
+    await typed($, 'what does the loader do?')
+    expect((await run($, 'queue', 'list')).text).toBe(`1. ${CACHE}\n2. ${CHUNKS}\n3. ${BENCH}`)
+    await typed($, CACHE) // Tab took it, Enter sent it
+    await typed($, `${CHUNKS}  Keep each chunk under 1 MB.`)
+    expect((await run($, 'queue', 'list')).text).toBe(`1. ${BENCH}`)
+  })
+
+  test("after an answer the box offers the next action, not the likeliest choice, and the engine's own guess gives way", async ($, on) => {
+    const world = engine(on, ['terminal'])
+    await answerTurn($, world)
+    await queueCopy($, world, CHUNKS)
+
+    await answerTurn($, world, 't2')
+    expect(world.requests).toHaveLength(2) // the choices are still asked for
+    expect(world.offered).toEqual([CHOICES[0], CHUNKS, CHUNKS])
+    await $.prompt.suggest({ text: 'engine guess', origin: { kind: 'suggestion' } })
+    expect(world.offered.at(-1)).toBe(CHUNKS)
+  })
+
+  test('the footer counts the queue and the notes while the keys are on, and nothing that is empty', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    expect(await footerLine($)).toBe('focus')
+    await answerTurn($, world)
+    for (const text of [CACHE, CHUNKS, BENCH]) await queueCopy($, world, text)
+    await run($, 'note', 'Keep the cache under 10 MB')
+    expect(await footerLine($)).toBe('focus & 3 queued & 1 note')
+    expect(footerCounts(0, 2)).toEqual(['2 notes'])
+    expect(footerCounts(1, 0)).toEqual(['1 queued'])
+  })
+
+  test('with the keys switched off the footer counts nothing', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { noteButton: false }, queue: [{ id: 'a', text: 'Ship it', at: 1, root: '/work/parser' }] })
+    await answerTurn($, world)
+    expect(await footerLine($)).toBe('focus')
+  })
+
+  test('each project keeps its own queue, read from the store, where junk is passed over', async ($, on) => {
+    const AT = 1_700_000_000_000
+    const world = engine(on, ['terminal'], {
+      showsSuggestions: false,
+      stored: { suggest: false },
+      queue: [1, 'x', null, { id: 'a', text: 'Ship the release notes', at: AT, root: '/work/parser' }, { id: 'b', text: 'Fix the boss wave', at: AT, root: '/work/game' }],
+    })
+    await answerTurn($, world) // the answer's end reads the queue afresh
+    expect(await footerLine($)).toBe('focus & 1 queued')
+    expect((await run($, 'queue', 'list')).text).toBe('1. Ship the release notes')
+
+    expect((await run($, 'queue', CACHE)).text).toBe(`Queued: ${CACHE} (2 in the queue, 8 to view)`)
+    world.root = '/work/game'
+    expect((await run($, 'queue', 'list')).text).toBe('1. Fix the boss wave')
+    world.root = '/work/parser'
+    expect((await run($, 'queue', 'list')).text).toBe(`1. Ship the release notes\n2. ${CACHE}`)
+  })
+
+  test('/queue <text> queues it, once; /queue clear empties this project’s queue; a full one says so', async ($, on) => {
+    engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    expect((await run($, 'queue', 'list')).text).toBe(EMPTY)
+    expect((await run($, 'queue', 'Ship it')).text).toBe('Queued: Ship it (1 in the queue, 8 to view)')
+    expect((await run($, 'queue', '  Ship   it ')).text).toBe('Already queued: Ship it (1 in the queue, 8 to view)')
+    expect((await run($, 'queue', 'clear')).text).toBe('Took 1 action off the queue.')
+    expect((await run($, 'queue', 'clear')).text).toBe('Nothing queued to clear.')
+
+    for (let n = 1; n <= 20; n += 1) await run($, 'queue', `Action ${n}`)
+    expect((await run($, 'queue', 'One too many')).text).toBe('The queue is full (20 for this project): send one or take one off first.')
+  })
+
+  test('/queue list answers with the queue as lines, where no surface draws as well', async ($, on) => {
+    engine(on, NOTHING_DRAWS, { showsSuggestions: false, stored: { suggest: false } })
+    await run($, 'queue', CACHE)
+    await run($, 'queue', BENCH)
+    expect((await run($, 'queue', 'list')).text).toBe(`1. ${CACHE}\n2. ${BENCH}`)
+  })
+})
+
+describe('the setup', () => {
+  const SETUP = 'companion-setup'
+  const NUDGE = 'new here? /companion-setup'
+  const KEYBINDINGS = '/Users/dev/.claude/keybindings.json' // the mock's path: slashes, no drive
+  const BOTH = JSON.stringify({ bindings: [{ context: 'Chat', bindings: { 'alt+q': 'command:queue', 'alt+n': 'command:note' } }] })
+  const FULLSCREEN = { columns: 100, rows: 30, isFullscreen: true }
+  const setup = ($: Engine, isFullscreen = false) =>
+    $.command.run({ command: 'companion-setup', args: '', origin: { kind: 'composer' }, presentation: { ...PRESENTATION, isFullscreen } })
+  const mountSetup = ($: Engine) => $.ui.mount({ ...SETTINGS_MOUNT, requestId: SETUP, surface: 'terminal' })
+  const label = async (pane: Drawn, key: string) => {
+    const found = await pane.find({ key })
+    return typeof found?.props.label === 'string' ? found.props.label : undefined
+  }
+
+  test('the hint line under the prompt box invites to /companion-setup until it is opened once', async ($, on) => {
+    engine(on, ['terminal'], { showsSuggestions: false })
+    await typed($, 'speed up the parser')
+    expect(await hintLine($)).toBe(NUDGE)
+    await setup($)
+    expect(await hintLine($)).toBeUndefined()
+  })
+
+  test('the hint line invites to nothing once both keys are bound and fullscreen is on', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, keybindings: BOTH })
+    await typed($, 'speed up the parser')
+    await $.turn.complete({ answer: 'Done.', durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    expect((await hintLine($, IDLE, 'terminal', FULLSCREEN)) ?? '').not.toContain(NUDGE)
+    expect(await hintLine($)).toContain(NUDGE) // the main screen: fullscreen is still to turn on
+  })
+
+  test('/companion-setup opens a pane with both steps ticked; Enter unticks one, and a applies the rest', async ($, on) => {
+    const world = engine(on, ['terminal'])
+    expect((await setup($)).text).toBe('Companion setup opened.')
+    expect(world.openedWith).toEqual([{ id: SETUP, title: 'Companion setup', focus: true, closeOnEscape: true, holdToasts: true, rows: 9 }])
+
+    const pane = await mountSetup($)
+    expect((await pane.find({ key: 'title' }))?.text).toBe('Companion setup · ↑↓ to move · Enter ticks · a applies · Esc closes')
+    expect(await label(pane, 'fullscreen')).toMatch(/^\[x\] Fullscreen: click suggestions/)
+    expect(await label(pane, 'keys')).toMatch(/^\[x\] Alt\+Q queues, Alt\+N keeps what you copied/)
+    expect((await pane.find({ key: 'apply' }))?.props).toMatchObject({ plain: true, hotkey: 'a' })
+    await pane.press({ key: 'keys' })
+    await pane.redraw()
+    expect(await label(pane, 'keys')).toMatch(/^\[ \] Alt\+Q/)
+
+    await pane.press({ key: 'apply' })
+    await pane.unmount()
+    expect(world.written).toEqual([]) // the keys were unticked
+    expect(world.closed).toEqual([SETUP])
+    expect(world.toasts.at(-1)).toBe('Switching to fullscreen…')
+    expect(world.commands).toEqual(['/tui fullscreen'])
+  })
+
+  test('applying binds Alt+Q and Alt+N in a new keybindings file, and the hints name them', async ($, on) => {
+    const world = engine(on, ['terminal'])
+    await setup($)
+    const pane = await mountSetup($)
+    await pane.press({ key: 'apply' })
+    await pane.unmount()
+
+    expect(world.written.map(file => file.path)).toEqual([KEYBINDINGS])
+    expect(JSON.parse(world.written[0]?.text ?? '')).toEqual({
+      $schema: 'https://www.schemastore.org/claude-code-keybindings.json',
+      $docs: 'https://code.claude.com/docs/en/keybindings',
+      bindings: [{ context: 'Chat', bindings: { 'alt+q': 'command:queue', 'alt+n': 'command:note' } }],
+    })
+    expect(world.toasts.at(-1)).toBe('Bound Alt+Q and Alt+N. Switching to fullscreen…')
+    expect((await $.command.run({ command: 'queue', args: 'list', origin: { kind: 'composer' }, presentation: PRESENTATION })).text).toContain('press Alt+Q')
+  })
+
+  test('applying keeps the person’s own bindings and leaves a key they use for something else alone', async ($, on) => {
+    const own = JSON.stringify({ bindings: [{ context: 'Chat', bindings: { 'ctrl+e': 'chat:externalEditor', 'alt+q': 'chat:stash' } }] })
+    const world = engine(on, ['terminal'], { keybindings: own })
+    await setup($)
+    const pane = await mountSetup($)
+    await pane.press({ key: 'apply' })
+    await pane.unmount()
+
+    expect(JSON.parse(world.written[0]?.text ?? '')).toEqual({
+      bindings: [{ context: 'Chat', bindings: { 'ctrl+e': 'chat:externalEditor', 'alt+q': 'chat:stash', 'alt+n': 'command:note' } }],
+    })
+    expect(world.toasts.at(-1)).toBe(
+      'Bound Alt+N. Alt+Q does something else for you already: bind /queue or /note to another key in keybindings.json. Switching to fullscreen…',
+    )
+  })
+
+  test('a keybindings file that is not JSON is left alone', async ($, on) => {
+    const world = engine(on, ['terminal'], { keybindings: '{ nope' })
+    await setup($)
+    const pane = await mountSetup($)
+    await pane.press({ key: 'apply' })
+    await pane.unmount()
+    expect(world.written).toEqual([])
+    expect(world.toasts.at(-1)).toBe('keybindings.json is not a keybindings file Companion can read, so it was left alone. Switching to fullscreen…')
+  })
+
+  test('in fullscreen with both keys bound, the pane says so and applying changes nothing', async ($, on) => {
+    const world = engine(on, ['terminal'], { keybindings: BOTH })
+    await setup($, true)
+    const pane = await mountSetup($)
+    expect((await pane.find({ key: 'fullscreenDone' }))?.text).toBe('✓ Fullscreen is on: click suggestions, the queue and notes, and select words to queue them')
+    expect((await pane.find({ key: 'keysDone' }))?.text).toBe('✓ Alt+Q queues and Alt+N keeps what you copied')
+    expect(await pane.find({ key: 'fullscreen' })).toBeUndefined()
+    await pane.press({ key: 'apply' })
+    await pane.unmount()
+    expect(world.toasts.at(-1)).toBe('Nothing to change: Companion is set up.')
+    expect(world.written).toEqual([])
+    expect(world.commands).toEqual([])
+  })
+
+  test('outside the terminal the setup says it belongs to the CLI', async ($, on) => {
+    const world = engine(on, ['vscode'])
+    expect((await setup($)).text).toBe('Companion’s setup is for the Claude Code CLI in a terminal, where fullscreen and the Alt keys live.')
+    expect(world.opened).toEqual([])
+  })
+
+  test('the keys are added only where their action has no key yet', () => {
+    const queueOnW = JSON.stringify({ bindings: [{ context: 'Global', bindings: { 'alt+w': 'command:queue' } }] })
+    expect(withCompanionKeys(queueOnW)?.added).toEqual(['Alt+N'])
+    expect(withCompanionKeys(BOTH)?.added).toEqual([])
+    expect(withCompanionKeys('[1, 2]')).toBeNull()
+  })
+})
+
+describe('the meters', () => {
+  const DAY = 86_400_000
+  const USAGE = { model: 'claude-opus-5-5', input_tokens: 2_000, output_tokens: 300, cache_read_input_tokens: 96_000, cache_creation_input_tokens: 2_000 }
+  /** The engine measures the session: the context's fill, and the windows a subscription reports, the week's if given. */
+  const measure = ($: Engine, percent: number, tokens: number, week?: { percentUsed: number; resetsAt?: string }) =>
+    $.session.measure({
+      context: { tokens, percent, window: 200_000 },
+      rateLimits: [{ kind: 'five_hour', percentUsed: 12 }, ...(week === undefined ? [] : [{ kind: 'seven_day', ...week }])],
+      changed: ['context', 'rateLimits'],
+    })
+
+  test('the bottom line reads the context and the week, and says when the week resets once it is mostly used', async ($, on) => {
+    engine(on, ['terminal'], { showsSuggestions: false })
+    expect(await meterLine($)).toBeUndefined()
+    await measure($, 42, 84_000, { percentUsed: 31.5, resetsAt: new Date(1_000 + 3 * DAY).toISOString() })
+    // Five cells each, filled as far as used, in the theme's success colour while under 60%; the footer keeps its own.
+    expect(await meterLine($)).toBe('ctx ▰▰▱▱▱ 42% & week ▰▰▱▱▱ 32%')
+    expect(await meterColorOf($, 'ctxMeter')).toBe('success')
+    expect(await footerLine($)).toBe('focus')
+    // The meters are the hint site's last line, under the tips.
+    const hint = await $.ui.mount({ plugin: PLUGIN, component: 'PromptHint', surface: 'terminal', props: { ...IDLE, hint: '? for shortcuts' }, viewport: WIDE })
+    const boxes = (await hint.findAll({ type: 'Box' })).map(box => box.props.key)
+    expect(boxes.indexOf('meters')).toBeGreaterThan(boxes.indexOf('tips'))
+    expect(boxes.indexOf('tips')).toBeGreaterThan(boxes.indexOf('keys'))
+    expect((await hint.find({ key: 'tips' }))?.props.width).toBe(120 - 6)
+    await hint.unmount()
+    await measure($, 64, 128_000, { percentUsed: 84, resetsAt: new Date(1_000 + 2 * DAY).toISOString() })
+    expect(await meterLine($)).toBe('ctx ▰▰▰▱▱ 64% & week ▰▰▰▰▱ 84% resets in 2 d')
+    expect(await meterColorOf($, 'ctxMeter')).toBe('warning')
+    expect(await meterColorOf($, 'weekMeter')).toBe('error')
+    // Off a subscription there is no week, and the five-hour window never shows.
+    await measure($, 3, 6_000)
+    expect(await meterLine($)).toBe('ctx ▰▱▱▱▱ 3%')
+    expect(meterCells(0)).toBe(0)
+    expect(meterCells(100)).toBe(5)
+    expect(await meterLine($, 'desktop')).toBeUndefined()
+    expect(resetsIn(new Date(1_000 + 5 * 3_600_000).toISOString(), 1_000)).toBe('in 5 h')
+    expect(resetsIn(new Date(1_000 + 40 * 60_000).toISOString(), 1_000)).toBe('in 40 min')
+    expect(resetsIn('not a date', 1_000)).toBeNull()
+  })
+
+  test('past 60% the line under the prompt says what each message sends again, and past 80% a toast says it once', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    await measure($, 55, 110_000)
+    expect(await hintLine($)).not.toMatch(/^context/)
+    await measure($, 64, 128_000)
+    // A line of its own, over the other tips.
+    expect(await hintLine($)).toBe('context 64%: each message sends 128k tokens again · /compact keeps the gist, /clear starts fresh\nnew here? /companion-setup')
+    const CONTEXT = 'context 74%: each message sends 738k tokens again · /compact keeps the gist, /clear starts fresh'
+    const facts = { context: CONTEXT, choices: 0, hasKept: true, isSetUp: false, keys: { queue: null, note: null } }
+    expect(tipLines({ numberKeys: true, onPress: 'send', noteButton: true }, facts)).toEqual([CONTEXT, 'new here? /companion-setup', 'Copy text, then /queue to queue or /note to note'])
+    expect(world.toasts).toEqual([])
+    await measure($, 82, 164_000)
+    await measure($, 85, 170_000)
+    expect(world.toasts).toEqual(['Context 82% full: each message sends 164k tokens again. /compact keeps the gist, /clear starts fresh.'])
+    // Compacted under 60%, the toast may come again.
+    await measure($, 40, 80_000)
+    expect(await hintLine($)).not.toMatch(/^context/)
+    await measure($, 81, 162_000)
+    expect(world.toasts).toHaveLength(2)
+  })
+
+  test('each end line adds what its turn cost and how much came from the cache, after what it ran on', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { route: true }, grades: { [QUESTION]: 'easy' } })
+    world.usd = 1.2
+    await typed($, QUESTION)
+    await $.turn.start({ text: QUESTION, turnId: 't1' })
+    await step($, { turnId: 't1', index: 0, messageCount: 1, ...OPUS_MAX })
+    world.usd = 1.24
+    await $.turn.complete({ answer: REPLY, durationMs: 4_200, isAborted: false, turnId: 't1', reason: 'answer', usage: USAGE })
+    expect(await endWords($, 4_200)).toBe('Easy task · Haiku 5.5 at low effort · $0.04 · 96% cached')
+    // The cache share in colour: the theme's success when most came from the cache.
+    const end = await $.ui.mount({ plugin: PLUGIN, component: 'TurnDuration', surface: 'terminal', props: { word: 'Baked', durationMs: 4_200 }, viewport: WIDE })
+    expect((await end.find({ type: 'Text', text: '96% cached' }))?.props.color).toBe('success')
+    await end.unmount()
+    expect([cacheColor('written'), cacheColor(60), cacheColor(20)]).toEqual(['warning', 'warning', 'error'])
+    // Cut to a narrow row, the line is drawn dim alone.
+    expect(await endWords($, 4_200, 80)).toBe('Easy task · Haiku 5.5 at low effo…')
+    expect(turnCost(0.004, undefined)).toBe('<$0.01')
+    // A first message writes the cache it then reads from.
+    expect(turnCost(0.26, { ...USAGE, input_tokens: 500, cache_read_input_tokens: 0, cache_creation_input_tokens: 20_000 })).toBe('$0.26 · cache written')
+    expect(turnCost(null, { ...USAGE, input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })).toBeNull()
+  })
+
+  test('with the meters off the footer, the tips and the end lines read nothing of them', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { meters: false } })
+    world.usd = 1.2
+    await measure($, 64, 128_000, { percentUsed: 31 })
+    expect(await footerLine($)).toBe('focus')
+    expect(await hintLine($)).not.toMatch(/^context/)
+    await typed($, QUESTION)
+    await $.turn.start({ text: QUESTION, turnId: 't1' })
+    world.usd = 1.24
+    await $.turn.complete({ answer: REPLY, durationMs: 4_200, isAborted: false, turnId: 't1', reason: 'answer', usage: USAGE })
+    expect(await endWords($, 4_200)).toBeUndefined()
+  })
+
+  test('idle an hour after an answer, the line under the prompt says the next message reads it all again at full price', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, contextTokens: 128_000 })
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    await world.clock.advance(59 * 60_000)
+    expect(await hintLine($)).not.toMatch(/^idle/)
+    await world.clock.advance(60_000)
+    expect(await hintLine($)).toMatch(/^idle 1 h: the cache has likely expired, so your next message reads 128k tokens again at full price\n/)
+    // A turn warms it again.
+    await $.turn.start({ text: 'and then?', turnId: 't2' })
+    expect(await hintLine($)).not.toMatch(/^idle/)
+  })
+
+  test('the cold cache warning follows the time picked', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, contextTokens: 128_000, stored: { coldAfter: '5' } })
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    await world.clock.advance(5 * 60_000)
+    expect(await hintLine($)).toMatch(/^idle 5 min: /)
+  })
+
+  test('switched off, the cold cache warning never comes', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, contextTokens: 128_000, stored: { coldAfter: 'off' } })
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    await world.clock.advance(3 * 3_600_000)
+    expect(await hintLine($)).not.toMatch(/^idle/)
+  })
+
+  test('a small conversation gets no cold cache warning: reading it again costs little', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, contextTokens: 8_000 })
+    await typed($, QUESTION)
+    await runTurn($, 't1', QUESTION, SONNET_HIGH)
+    await world.clock.advance(3 * 3_600_000)
+    expect(await hintLine($)).not.toMatch(/^idle/)
+  })
+
+  test('auto-compact runs /compact once past the fill picked, and again only after the fill dropped under it', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { compactAt: '80' } })
+    await measure($, 75, 150_000)
+    await world.clock.advance(1)
+    expect(world.compacted).toBe(0)
+    await measure($, 85, 170_000)
+    await world.clock.advance(1)
+    expect(world.compacted).toBe(1)
+    expect(world.toasts).toContain('Context 85% full: compacting, as /companion is set to.')
+    // Still past it after compacting: not again and again.
+    await measure($, 83, 166_000)
+    await world.clock.advance(1)
+    expect(world.compacted).toBe(1)
+    await measure($, 30, 60_000)
+    await measure($, 81, 162_000)
+    await world.clock.advance(1)
+    expect(world.compacted).toBe(2)
+  })
+
+  test('auto-compact waits while an answer runs', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { compactAt: '80' } })
+    await typed($, QUESTION)
+    await $.turn.start({ text: QUESTION, turnId: 't1' })
+    await measure($, 85, 170_000)
+    await world.clock.advance(1)
+    expect(world.compacted).toBe(0)
+    await $.turn.complete({ answer: REPLY, durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await measure($, 85, 170_000)
+    await world.clock.advance(1)
+    expect(world.compacted).toBe(1)
+  })
+
+  test('auto-compact is off unless picked', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    await measure($, 95, 190_000)
+    await world.clock.advance(1)
+    expect(world.compacted).toBe(0)
+  })
+})
+
+describe('a fresh start, the done alert and the context X-ray', () => {
+  const run = ($: Engine, command: string, args = '') => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: PRESENTATION })
+  const CONVERSATION: SessionMessage[] = [
+    { role: 'user', text: 'speed up the parser for big files', toolUses: [] },
+    {
+      role: 'assistant',
+      text: 'Big files now stream; the tests pass.',
+      toolUses: [
+        { tool_use_id: 'a', tool: 'Read', input: { file_path: '/work/parser/src/parser.ts' }, text: 'x'.repeat(48_000) },
+        { tool_use_id: 'b', tool: 'Edit', input: { file_path: '/work/parser/src/parser.ts', old_string: 'a', new_string: 'b' }, text: 'ok' },
+        { tool_use_id: 'c', tool: 'Bash', input: { command: 'npm test' }, text: 'y'.repeat(32_000) },
+        { tool_use_id: 'd', tool: 'Write', input: { file_path: '/work/parser/bench/big.test.ts', content: '' }, text: 'ok' },
+        { tool_use_id: 'e', tool: 'Edit', input: { file_path: '/work/parser/src/parser.ts', old_string: 'b', new_string: 'c' }, text: 'ok' },
+      ],
+    },
+  ]
+  const HANDOFF = 'Task: speed up the parser for big files.\n\nDone: streaming, tests pass.\nNext: cache tokens by hash.\nNotes: none'
+
+  test('/fresh writes a handoff from the conversation, clears it, and puts the handoff in the prompt box with the files changed', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    world.messages = CONVERSATION
+    world.handoff = HANDOFF
+    expect((await run($, 'fresh')).text).toBe('Writing a handoff, then starting fresh.')
+    await world.clock.advance(1)
+
+    expect(world.handedOver).toEqual(['Person: speed up the parser for big files\n\nClaude: Big files now stream; the tests pass.'])
+    expect(world.commands).toEqual(['/clear'])
+    expect(world.box).toBe(
+      [
+        'Picking up from an earlier conversation, cleared to save tokens:',
+        'Task: speed up the parser for big files.',
+        'Done: streaming, tests pass.',
+        'Next: cache tokens by hash.',
+        'Notes: none',
+        'Files changed: bench/big.test.ts, src/parser.ts',
+      ].join('\n'),
+    )
+    expect(world.toasts.at(-1)).toBe('Cleared. The handoff is in the prompt box: edit it, or press Enter.')
+  })
+
+  test('/fresh clears nothing where the handoff could not be written', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    world.messages = CONVERSATION
+    await run($, 'fresh')
+    await world.clock.advance(1)
+    expect(world.commands).toEqual([])
+    expect(world.toasts.at(-1)).toBe('Could not write the handoff, so nothing was cleared.')
+  })
+
+  test('/fresh waits for a running answer, and an empty conversation has nothing to hand over', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    world.handoff = HANDOFF
+    await run($, 'fresh')
+    await world.clock.advance(1)
+    expect(world.toasts.at(-1)).toBe('Nothing to hand over yet: this conversation is empty.')
+    world.messages = CONVERSATION
+    await typed($, QUESTION)
+    await $.turn.start({ text: QUESTION, turnId: 't1' })
+    await run($, 'fresh')
+    await world.clock.advance(1)
+    expect(world.toasts.at(-1)).toBe('An answer is still running: /fresh once it ends.')
+    expect(world.commands).toEqual([])
+  })
+
+  test('where the conversation will not clear, the handoff is copied to paste after a /clear', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, commandsFail: true })
+    world.messages = CONVERSATION
+    world.handoff = HANDOFF
+    await run($, 'fresh')
+    await world.clock.advance(1)
+    expect(world.copied.at(-1)).toMatch(/^Picking up from an earlier conversation/)
+    expect(world.toasts.at(-1)).toBe('Could not clear the conversation: type /clear, then paste the handoff, which is copied.')
+  })
+
+  test('an answer that ran past a minute raises a notification; a shorter one does not', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false } })
+    await typed($, QUESTION)
+    await $.turn.complete({ answer: 'Tests pass.\n\nDetails follow.', durationMs: 75_000, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    expect(world.notified).toEqual(['Done after 1m 15s: Tests pass. Details follow.'])
+    await $.turn.complete({ answer: 'Quick one.', durationMs: 20_000, isAborted: false, turnId: 't2', reason: 'answer' })
+    await world.clock.advance(1)
+    expect(world.notified).toHaveLength(1)
+    expect(world.ran).toEqual([])
+
+    // A terminal with no notification channel on Windows: the system's sound instead.
+    world.notifyResult = { isSent: false, reason: 'no-channel' }
+    await $.turn.complete({ answer: 'Done.', durationMs: 90_000, isAborted: false, turnId: 't3', reason: 'answer' })
+    await world.clock.advance(1)
+    expect(world.ran.at(-1)?.[0]).toBe('powershell.exe')
+    expect(world.ran.at(-1)?.join(' ')).toContain('Windows Notify System Generic.wav')
+    // Notifications the person switched off stay off: no sound either.
+    world.notifyResult = { isSent: false, reason: 'disabled' }
+    const sounds = world.ran.length
+    await $.turn.complete({ answer: 'Done.', durationMs: 90_000, isAborted: false, turnId: 't4', reason: 'answer' })
+    await world.clock.advance(1)
+    expect(world.ran).toHaveLength(sounds)
+    expect(durationText(45_000)).toBe('45s')
+  })
+
+  test('after /clear, what the footer and the hint lines draw from is read again: no session.start follows a clear', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, queue: [{ id: 'a', text: 'Ship it', at: 1, root: '/work/parser' }] })
+    on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+    expect(await footerLine($)).toBe('focus') // nothing read yet
+    await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+    await world.clock.advance(250)
+    expect(await footerLine($)).toBe('focus & 1 queued')
+  })
+
+  test('the done alert follows its setting, and an interrupted answer raises none', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false, stored: { suggest: false, doneAfter: 'off' } })
+    await typed($, QUESTION)
+    await $.turn.complete({ answer: 'Done.', durationMs: 600_000, isAborted: false, turnId: 't1', reason: 'answer' })
+    await world.clock.advance(1)
+    expect(world.notified).toEqual([])
+  })
+
+  test('/ctx opens the X-ray: each category a bar in its colour, the biggest outputs, the MCP servers, the memory files and a tip', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    world.messages = CONVERSATION
+    world.breakdown = {
+      categories: [
+        { name: 'System prompt', tokens: 3_000, color: 'promptBorder', isDeferred: false, kind: 'used' },
+        { name: 'MCP tools', tokens: 30_000, color: 'warning', isDeferred: false, kind: 'used' },
+        { name: 'MCP tools (deferred)', tokens: 9_000, color: 'inactive', isDeferred: true, kind: 'deferred' },
+        { name: 'Memory files', tokens: 6_000, color: 'claude', isDeferred: false, kind: 'used' },
+        { name: 'Messages', tokens: 61_000, color: 'suggestion', isDeferred: false, kind: 'used' },
+        { name: 'Free space', tokens: 100_000, color: 'inactive', isDeferred: false, kind: 'free' },
+      ],
+      totalTokens: 100_000,
+      maxTokens: 200_000,
+      rawMaxTokens: 200_000,
+      autocompactSource: 'model-default',
+      percentage: 50,
+      gridRows: [],
+      model: 'Opus 5.5',
+      memoryFiles: [
+        { path: 'C:/Users/dev/.claude/CLAUDE.md', type: 'User', tokens: 2_000 },
+        { path: '/work/parser/CLAUDE.md', type: 'Project', tokens: 4_000 },
+      ],
+      mcpTools: [
+        { name: 'manage', serverName: 'github', tokens: 20_000, isLoaded: true },
+        { name: 'navigate', serverName: 'chrome', tokens: 10_000, isLoaded: true },
+        { name: 'send', serverName: 'gmail', tokens: 9_000, isLoaded: false },
+      ],
+      agents: [],
+      isAutoCompactEnabled: true,
+      apiUsage: null,
+    }
+
+    expect((await run($, 'ctx')).text).toBe('Context X-ray opened.')
+    expect(world.openedWith.at(-1)).toEqual({ id: 'companion-xray', title: 'Context X-ray', focus: true, closeOnEscape: true, holdToasts: true, rows: 5 + 7 })
+    const pane = await $.ui.mount({ ...SETTINGS_MOUNT, requestId: 'companion-xray', surface: 'terminal' })
+    expect((await pane.find({ key: 'title' }))?.text).toBe('Context X-ray · 100k of 200k (50%) · Esc closes')
+    expect((await pane.find({ key: 'row-4' }))?.text).toBe(`${'Messages'.padEnd(22)}▰▰▰▱▱▱▱▱▱▱ 61k`)
+    expect(await pane.find({ type: 'Text', text: '▰▰▰' })).toMatchObject({ props: { color: 'suggestion' } })
+    expect((await pane.find({ key: 'row-5' }))?.text).toBe(`${'Free space'.padEnd(22)}▰▰▰▰▰▱▱▱▱▱ 100k`) // dim: room, not a cost
+    expect((await pane.find({ key: 'outputs' }))?.text).toBe('Biggest tool outputs: Read src/parser.ts 12k · Bash npm test 8k')
+    expect((await pane.find({ key: 'servers' }))?.text).toBe('MCP servers: github 20k · chrome 10k')
+    expect((await pane.find({ key: 'memory' }))?.text).toBe('Memory files: CLAUDE.md 4k · .claude/CLAUDE.md 2k')
+    expect((await pane.find({ key: 'tip' }))?.text).toBe('MCP tool lists take 30k of every message: turn off the servers you do not use in /mcp.')
+    await pane.unmount()
+
+    expect(xrayTip({ window: 200_000, percent: 50, mcp: 0, memory: 12_000, biggestMemory: 'CLAUDE.md' })).toBe('Memory files take 12k of every message: trim the biggest, CLAUDE.md.')
+    expect(xrayTip({ window: 200_000, percent: 50, mcp: 0, memory: 0 })).toBe('Most of it is the conversation: /compact keeps the gist, /fresh starts over with a handoff.')
+    expect(xrayTip({ window: 200_000, percent: 10, mcp: 0, memory: 0 })).toBe('Plenty of room: nothing to cut yet.')
+  })
+
+  test('/ctx before any measure says so, and where no pane is placed answers as text', async ($, on) => {
+    const world = engine(on, ['terminal'], { showsSuggestions: false })
+    expect((await run($, 'ctx')).text).toBe('No measure of the context yet: send a message first.')
+    world.breakdown = {
+      categories: [{ name: 'Messages', tokens: 20_000, color: 'suggestion', isDeferred: false, kind: 'used' }],
+      totalTokens: 20_000,
+      maxTokens: 200_000,
+      rawMaxTokens: 200_000,
+      autocompactSource: 'model-default',
+      percentage: 10,
+      gridRows: [],
+      model: 'Opus 5.5',
+      memoryFiles: [],
+      mcpTools: [],
+      agents: [],
+      isAutoCompactEnabled: true,
+      apiUsage: null,
+    }
+    expect(xrayText(xrayOf(world.breakdown, [], '/work/parser'))).toBe('Context X-ray: 20k of 200k (10%)\nMessages: 20k\nPlenty of room: nothing to cut yet.')
   })
 })

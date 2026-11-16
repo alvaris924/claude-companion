@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Notes, kept for each project across sessions. `/note <text>` keeps a message for later; `/note` on its own keeps what you selected or copied from an answer, or lists the last answer's lines to keep one by one. `/save-next [1-5]` keeps a suggested message, `/notes` opens them (a note's number puts it in the prompt box and the note stays, x removes one, 0 clears them after asking), `/notes clear` clears them and `/notes export [file]` writes them to `NOTES.md` in the project. In the fullscreen terminal an "Add note" goes under each answer. A project holds 50 notes of up to 500 characters; the store adds `notes` ([ADR-0017](docs/adr/0017-notes-and-a-queue-kept-for-each-project.md), #45).
+- A queue of next actions, kept for each project. `/queue` on its own queues what you selected or copied from an answer, `/queue <text>` queues the text, `/queue list` prints the queue and `/queue clear` empties it. The next action is the grey text in the prompt box, where Tab takes it, and a prompt you send that starts with a queued action takes it off the queue. A project holds 20 actions of up to 1,000 characters; the store adds `queue` ([ADR-0017](docs/adr/0017-notes-and-a-queue-kept-for-each-project.md), #45).
+- In the terminal, three keys under the prompt box: 7 copies the last answer as written, 8 opens the queue as a list (Enter takes an action into the prompt box, t moves it to the top, x takes it off) and 9 opens the notes. The footer counts what waits ("2 queued & 1 note"). A "Copy, queue, notes keys" setting turns them off ([ADR-0018](docs/adr/0018-a-quiet-terminal-band.md), #45).
+- Meters, in the terminal: a line under the prompt box shows how full the context is and, on a subscription, how much of the week is used, with when the week resets once 80% of it is used. Each answer's end line adds what the turn cost and how much of its input came from the prompt cache. Past 60% full a line says what each message sends again, and past 80% a toast says it once. A "Meters" setting turns them off ([ADR-0019](docs/adr/0019-meters-and-context-tools.md), #45).
+- A cold cache warning: idle for an hour after an answer (5 minutes or never, in the settings), the line under the prompt box says the prompt cache has likely expired and what the next message reads again at full price. A conversation under 20,000 tokens gets none (#45).
+- "Auto-compact", off unless picked: compacts the conversation once an answer ends past 70%, 80% or 90% full, once until the fill drops under that again (#45).
+- A done alert: once an answer that ran a minute or longer ends (30 seconds, 5 minutes or off, in the settings), a notification says so through the channel Claude Code's own notifications use; on Windows with none, a sound plays (#45).
+- `/fresh`: a model writes a four-line handoff of the task from the end of the conversation, the conversation is cleared, and the handoff waits in the prompt box with the files the conversation changed, to edit or send. Nothing is cleared where the handoff could not be written (#45).
+- `/ctx`, the context X-ray: a pane of what fills the context window, a bar for each category, then the biggest tool outputs, the MCP servers and the memory files, and one tip on what to cut first (#45).
+- `/companion-setup`, in the terminal: two steps, each applied only while ticked. One switches to fullscreen, where clicks work; the other binds Alt+Q and Alt+N to `/queue` and `/note` in your keybindings file, keeping every binding of yours. A line under the prompt box points to it until it was opened once; the store adds `setup` ([ADR-0018](docs/adr/0018-a-quiet-terminal-band.md), #45).
+
+### Changed
+
+- The terminal's band is quieter. The choices come one a line, and the last prompt is the band's last row, right over the prompt box. The line that said how to pick a choice is gone, since the numbers say it; with "Number keys" off, how to reach the choices is said under the prompt box. What a fitted turn ran on moves from the band to the line that ends its answer, and the band keeps the switch or redo button ([ADR-0018](docs/adr/0018-a-quiet-terminal-band.md), #45).
+- With actions queued, the prompt box's grey text is the next queued action, not the likeliest suggestion (#45).
+- The settings gain two groups, the keys and the meters, and the store gains `noteButton`, `meters`, `coldAfter`, `compactAt` and `doneAfter` (#45).
+
 ## [0.13.0] - 2026-10-22
 
 ### Changed
