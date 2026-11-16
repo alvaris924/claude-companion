@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # The build the plugin is checked against. Raise it on purpose, in its own pull request.
-      CLAUDE_CODE_VERSION: 2.1.303
+      CLAUDE_CODE_VERSION: 2.1.325
     steps:
       - uses: actions/checkout@v7
 
