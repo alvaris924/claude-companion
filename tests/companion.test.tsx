@@ -11,7 +11,7 @@ const SCROLL = { offset: 0, bodyRows: 4 }
 const BAND = {
   plugin: PLUGIN,
   component: 'AbovePrompt',
-  props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: SCROLL, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: SCROLL, view: {} },
 } as const
 const PANE_PROPS = { isFocused: false, bodyColumns: 60, placement: 'inline', scroll: SCROLL, view: {} } as const
 const PANE_MOUNT = { plugin: PLUGIN, component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, title: 'Last & next prompt' } } as const
@@ -175,7 +175,7 @@ function engine(on: On, surfaces: readonly RenderSurface[], setup: Setup = {}): 
     world.openedWith.push({ ...e })
     return { value: surfaces.length > 0 ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'no surface draws it' } }
   })
-  on('ui.focus', () => ({})) // the ring lands where the person's keys moved it
+  on('ui.focus', { plugin: '*' }, () => ({})) // the ring lands where the person's keys moved it
   on('ui.scroll', (_, e) => {
     world.scrolled.push(e.by)
     return {}
